@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>職能自評線上填答系統</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <style>
+        :root {
+            --blue: #0ea5e9;
+            --blue-dark: #0284c7;
+            --green: #10b981;
+            --green-dark: #059669;
+            --amber: #f59e0b;
+            --red: #dc2626;
+            --slate-50: #f8fafc;
+            --slate-100: #f1f5f9;
+            --slate-200: #e2e8f0;
+            --slate-300: #cbd5e1;
+            --slate-500: #64748b;
+            --slate-700: #334155;
+            --slate-900: #0f172a;
+            --rating-yellow: #fffda1;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: "微軟正黑體", "Microsoft JhengHei", Arial, sans-serif;
+            background: var(--slate-50);
+            color: #1e293b;
+            overflow-x: hidden;
+        }
+        button, input, select { font: inherit; }
+        button { -webkit-tap-highlight-color: transparent; }
+        .loading-mask {
+            position: fixed; inset: 0; z-index: 9999;
+            background: rgba(255,255,255,.92);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.35rem; font-weight: 800; color: var(--slate-700);
+        }
+        .toast {
+            position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+            z-index: 10000; background: rgba(15,23,42,.92); color: #fff;
+            padding: 12px 22px; border-radius: 999px; font-weight: 700;
+            box-shadow: 0 8px 24px rgba(0,0,0,.18); max-width: 90vw; text-align: center;
+        }
+        .btn {
+            border: 0; border-radius: 8px; padding: 11px 18px; cursor: pointer;
+            font-weight: 800; transition: .2s; display: inline-flex; align-items: center;
+            justify-content: center; gap: 6px; text-decoration: none;
+        }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 5px 12px rgba(15,23,42,.12); }
+        .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+        .btn-primary { background: var(--blue); color: #fff; }
+        .btn-success { background: var(--green); color: #fff; }
+        .btn-warning { background: var(--amber); color: #fff; }
+        .btn-danger { background: var(--red); color: #fff; }
+        .btn-secondary { background: #64748b; color: #fff; }
+        .btn-outline { background: #fff; color: var(--slate-700); border: 1px solid var(--slate-300); }
+        .btn-outline-blue { background: #fff; color: var(--blue-dark); border: 1px solid #bae6fd; }
+        .btn-outline-green { background: #fff; color: var(--green-dark); border: 1px solid #a7f3d0; }
+        .btn-block { width: 100%; }
+        .card {
+            background: #fff; border-radius: 14px; padding: 24px;
+            box-shadow: 0 4px 18px rgba(15,23,42,.06);
+        }
+        .field { width: 100%; padding: 12px 14px; border: 1px solid var(--slate-300); border-radius: 8px; outline: none; }
+        .field:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(14,165,233,.12); }
+
+        /* 登入與活動列表 */
+        .login-container { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+        .login-box { width: 100%; max-width: 420px; border-top: 6px solid var(--blue); text-align: center; padding: 38px; }
+        .login-box h1 { margin: 0 0 8px; color: var(--slate-900); font-size: 1.8rem; }
+        .login-box p { margin: 0 0 24px; color: var(--slate-500); }
+        .login-box .field { text-align: center; letter-spacing: 3px; font-size: 1.1rem; margin-bottom: 15px; }
+        .admin-container { max-width: 1120px; margin: 0 auto; padding: 36px 20px 60px; }
+        .admin-header { text-align: center; margin-bottom: 28px; }
+        .admin-header h1 { margin: 0; color: var(--slate-900); font-size: 2.15rem; }
+        .admin-header p { color: var(--slate-500); margin: 8px 0 0; }
+        .create-box { display: flex; gap: 12px; align-items: center; margin-bottom: 28px; }
+        .create-box .field { flex: 1; min-width: 240px; font-size: 1.05rem; }
+        .activity-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); gap: 22px; }
+        .activity-card { border-top: 6px solid var(--blue); }
+        .activity-title { font-size: 1.3rem; font-weight: 900; color: var(--slate-900); line-height: 1.35; min-height: 3.5rem; }
+        .activity-meta { color: var(--slate-500); font-size: .92rem; margin: 8px 0 18px; }
+        .activity-actions { display: grid; gap: 8px; }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .empty-box { grid-column: 1 / -1; padding: 55px 20px; text-align: center; border: 2px dashed var(--slate-200); color: var(--slate-500); background: #fff; border-radius: 14px; }
+
+        /* 共用彈窗 */
+        .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.58); z-index: 5000; display: flex; align-items: center; justify-content: center; padding: 18px; }
+        .modal-box { background: #fff; border-radius: 14px; padding: 28px; width: 100%; max-width: 470px; box-shadow: 0 18px 50px rgba(0,0,0,.25); }
+        .modal-box h3 { margin: 0 0 12px; color: var(--slate-900); }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+        .detail-modal { max-width: 900px; max-height: 88vh; overflow-y: auto; }
+
+        /* 講師端 */
+        .teacher-wrapper { max-width: 1240px; margin: 0 auto; padding: 24px 18px 60px; }
+        .teacher-topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+        .teacher-title h1 { margin: 0; color: var(--slate-900); font-size: 1.85rem; }
+        .teacher-title p { margin: 5px 0 0; color: var(--slate-500); }
+        .teacher-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .status-pill { padding: 8px 13px; border-radius: 999px; font-weight: 900; }
+        .status-on { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .status-off { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px,1fr)); gap: 14px; margin-bottom: 18px; }
+        .summary-card { padding: 20px; text-align: center; border-top: 5px solid var(--blue); }
+        .summary-card.green { border-top-color: var(--green); }
+        .summary-card.amber { border-top-color: var(--amber); }
+        .summary-label { font-weight: 800; color: var(--slate-500); font-size: .95rem; }
+        .summary-value { font-size: 2rem; font-weight: 900; color: var(--slate-900); margin-top: 5px; }
+        .tab-bar { display: flex; gap: 8px; flex-wrap: wrap; margin: 20px 0 14px; }
+        .tab-btn { background: #fff; border: 1px solid var(--slate-300); color: var(--slate-700); padding: 10px 16px; border-radius: 999px; font-weight: 800; cursor: pointer; }
+        .tab-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+        .section-title { margin: 0 0 16px; color: var(--slate-900); font-size: 1.35rem; }
+        .competency-bars { display: grid; gap: 15px; }
+        .bar-row-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-weight: 900; margin-bottom: 7px; }
+        .bar-track { height: 18px; background: var(--slate-100); border-radius: 999px; overflow: hidden; }
+        .bar-fill { height: 100%; background: linear-gradient(90deg, var(--blue), #38bdf8); border-radius: 999px; transition: width .4s; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; min-width: 760px; }
+        th, td { border-bottom: 1px solid var(--slate-200); padding: 12px 10px; text-align: left; vertical-align: middle; }
+        th { background: var(--slate-100); color: var(--slate-700); font-size: .92rem; }
+        td { color: #334155; }
+        .score-badge { display: inline-flex; min-width: 42px; height: 30px; align-items: center; justify-content: center; border-radius: 999px; background: #e0f2fe; color: #0369a1; font-weight: 900; }
+        .item-result { border: 1px solid var(--slate-200); border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+        .item-result-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+        .item-result-text { font-weight: 800; line-height: 1.55; }
+        .distribution { display: grid; gap: 8px; margin-top: 12px; }
+        .dist-cell { background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: 8px; text-align: center; padding: 8px 4px; font-size: .88rem; }
+        .dist-cell strong { display: block; color: var(--slate-900); font-size: 1.05rem; }
+        .teacher-empty { text-align: center; color: var(--slate-500); padding: 50px 20px; }
+
+        /* 學員端 */
+        .student-wrapper { max-width: 860px; margin: 0 auto; padding: 22px 16px 100px; }
+        .student-hero { border-left: 6px solid var(--blue); margin-bottom: 16px; }
+        .student-hero h1 { margin: 0 0 8px; color: var(--slate-900); font-size: 1.75rem; line-height: 1.35; }
+        .student-hero p { margin: 4px 0; color: var(--slate-500); line-height: 1.65; }
+        .identity-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 16px; }
+        .identity-grid label { display: block; font-weight: 800; color: var(--slate-700); margin-bottom: 6px; }
+        .required { color: var(--red); }
+        .scale-card { margin-bottom: 16px; padding: 18px; }
+        .scale-card h2 { margin: 0 0 12px; font-size: 1.2rem; color: var(--slate-900); }
+        .scale-grid { display: grid; gap: 8px; }
+        .scale-item { background: var(--rating-yellow); border: 1px solid #e8e47a; border-radius: 10px; padding: 11px 8px; text-align: center; min-height: 118px; display: flex; flex-direction: column; justify-content: center; }
+        .scale-number { font-size: 1.5rem; font-weight: 900; color: var(--slate-900); }
+        .scale-name { font-weight: 900; margin: 4px 0; }
+        .scale-desc { font-size: .82rem; color: #475569; line-height: 1.4; }
+        .progress-card { position: sticky; top: 8px; z-index: 50; margin-bottom: 16px; padding: 14px 18px; }
+        .progress-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-weight: 900; }
+        .progress-track { height: 10px; background: var(--slate-100); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+        .progress-fill { height: 100%; background: var(--green); transition: width .25s; }
+        .competency-section { margin-bottom: 18px; }
+        .competency-header { background: linear-gradient(135deg, #e0f2fe, #f0f9ff); border: 1px solid #bae6fd; padding: 15px 18px; border-radius: 12px 12px 0 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .competency-header h2 { margin: 0; color: #075985; font-size: 1.3rem; }
+        .competency-count { color: #0369a1; font-weight: 900; white-space: nowrap; }
+        .question-card { background: #fff; border: 1px solid var(--slate-200); border-top: 0; padding: 18px; }
+        .question-card:last-child { border-radius: 0 0 12px 12px; }
+        .question-text { font-size: 1.06rem; line-height: 1.65; font-weight: 700; color: #27364a; margin-bottom: 12px; }
+        .rating-row { display: grid; gap: 8px; }
+        .rating-btn { border: 2px solid var(--slate-200); background: #fff; border-radius: 10px; padding: 10px 5px; cursor: pointer; font-weight: 900; color: var(--slate-700); transition: .15s; }
+        .rating-btn:hover { border-color: #7dd3fc; background: #f0f9ff; }
+        .rating-btn.selected { border-color: var(--blue); background: #e0f2fe; color: #0369a1; box-shadow: 0 3px 9px rgba(14,165,233,.16); }
+        .bottom-action { position: fixed; left: 0; right: 0; bottom: 0; z-index: 100; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); border-top: 1px solid var(--slate-200); padding: 12px 18px; box-shadow: 0 -5px 18px rgba(15,23,42,.08); }
+        .bottom-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+        .bottom-progress { font-weight: 900; color: var(--slate-700); }
+        .submitted-box { text-align: center; padding: 42px 24px; }
+        .submitted-icon { font-size: 3.8rem; }
+        .submitted-box h2 { color: var(--slate-900); font-size: 1.7rem; margin: 10px 0; }
+        .submitted-score { display: inline-flex; flex-direction: column; justify-content: center; width: 140px; height: 140px; border-radius: 50%; background: #e0f2fe; color: #075985; margin: 18px 0; }
+        .submitted-score strong { font-size: 2.4rem; }
+        .submitted-actions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+        .closed-box { text-align: center; padding: 55px 22px; }
+        .closed-box h2 { color: var(--slate-900); }
+        .mini-score-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(160px,1fr)); gap: 10px; margin-top: 18px; }
+        .mini-score { background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: 10px; padding: 12px; }
+        .mini-score strong { display: block; font-size: 1.45rem; color: var(--blue-dark); }
+
+        /* 相對結果呈現 */
+        .result-note { max-width: 720px; margin: 8px auto 20px; padding: 13px 16px; border-radius: 11px; background: #f0f9ff; border: 1px solid #bae6fd; color: #0c4a6e; line-height: 1.7; text-align: left; }
+        .insight-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 18px 0; }
+        .insight-card { border-radius: 12px; padding: 17px; text-align: left; border: 1px solid var(--slate-200); background: #fff; }
+        .insight-card.high { background: #ecfdf5; border-color: #a7f3d0; }
+        .insight-card.low { background: #fff7ed; border-color: #fed7aa; }
+        .insight-label { font-size: .9rem; font-weight: 900; color: var(--slate-500); margin-bottom: 6px; }
+        .insight-name { font-size: 1.22rem; font-weight: 900; color: var(--slate-900); line-height: 1.45; }
+        .insight-score { margin-top: 7px; font-weight: 900; color: var(--blue-dark); }
+        .result-section { margin-top: 24px; text-align: left; }
+        .result-section h3 { margin: 0 0 12px; color: var(--slate-900); font-size: 1.25rem; }
+        .rank-list { display: grid; gap: 10px; }
+        .rank-row { display: grid; grid-template-columns: 44px minmax(0,1fr) 68px; gap: 10px; align-items: center; padding: 13px; border: 1px solid var(--slate-200); border-radius: 11px; background: #fff; }
+        .rank-number { width: 34px; height: 34px; border-radius: 50%; background: #e0f2fe; color: #0369a1; display: flex; align-items: center; justify-content: center; font-weight: 900; }
+        .rank-name { font-weight: 900; color: var(--slate-900); margin-bottom: 7px; }
+        .rank-score { text-align: right; font-weight: 900; color: var(--blue-dark); }
+        .rank-bar { height: 9px; border-radius: 999px; background: var(--slate-100); overflow: hidden; }
+        .rank-bar-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg,var(--blue),#38bdf8); }
+        .behavior-columns { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+        .behavior-panel { border: 1px solid var(--slate-200); border-radius: 12px; padding: 15px; background: var(--slate-50); }
+        .behavior-panel h4 { margin: 0 0 10px; color: var(--slate-900); font-size: 1.05rem; }
+        .behavior-list { display: grid; gap: 9px; }
+        .behavior-item { display: grid; grid-template-columns: minmax(0,1fr) 42px; gap: 10px; align-items: start; background: #fff; border: 1px solid var(--slate-200); border-radius: 10px; padding: 11px; }
+        .behavior-text { line-height: 1.55; color: #334155; font-weight: 700; }
+        .comp-chip { display: inline-block; margin-top: 6px; padding: 3px 8px; border-radius: 999px; background: #e0f2fe; color: #0369a1; font-size: .78rem; font-weight: 900; }
+        .behavior-score { width: 38px; height: 30px; border-radius: 999px; display: flex; align-items: center; justify-content: center; background: #e0f2fe; color: #0369a1; font-weight: 900; }
+        .relative-empty { padding: 16px; border-radius: 10px; background: var(--slate-50); color: var(--slate-500); text-align: center; line-height: 1.6; }
+        .group-insight-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-bottom: 18px; }
+
+        /* 題目與計分設定 */
+        .settings-modal { max-width: 1120px; max-height: 92vh; overflow-y: auto; text-align: left; }
+        .settings-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; border-bottom:1px solid var(--slate-200); padding-bottom:14px; margin-bottom:18px; }
+        .settings-section { background: var(--slate-50); border:1px solid var(--slate-200); border-radius:12px; padding:16px; margin-bottom:16px; }
+        .settings-section h4 { margin:0 0 12px; color:var(--slate-900); font-size:1.12rem; }
+        .settings-note { color:var(--slate-500); line-height:1.6; font-size:.92rem; margin:6px 0 0; }
+        .settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+        .settings-field label { display:block; font-weight:800; color:var(--slate-700); margin-bottom:6px; }
+        .scale-editor-grid { display:grid; gap:10px; margin-top:12px; }
+        .scale-editor-row { display:grid; grid-template-columns:54px minmax(150px,.7fr) minmax(260px,1.8fr); gap:8px; align-items:center; }
+        .scale-editor-number { height:44px; border-radius:9px; background:var(--rating-yellow); border:1px solid #e8e47a; display:flex; align-items:center; justify-content:center; font-weight:900; font-size:1.15rem; }
+        .competency-editor { background:#fff; border:1px solid var(--slate-200); border-radius:12px; margin-bottom:14px; overflow:hidden; }
+        .competency-editor-head { display:flex; align-items:center; gap:8px; padding:12px; background:#e0f2fe; border-bottom:1px solid #bae6fd; }
+        .competency-editor-head .field { font-weight:900; color:#075985; }
+        .item-editor-list { padding:12px; display:grid; gap:9px; }
+        .item-editor-row { display:grid; grid-template-columns:38px 1fr auto; gap:8px; align-items:start; }
+        .item-order { height:42px; display:flex; align-items:center; justify-content:center; font-weight:900; color:var(--slate-500); }
+        .item-editor-row textarea { min-height:72px; resize:vertical; line-height:1.55; }
+        .item-actions { display:flex; gap:5px; flex-wrap:wrap; }
+        .icon-btn { width:38px; height:38px; padding:0; border-radius:8px; }
+        .gear-btn { font-size:1.15rem; min-width:46px; }
+
+        @media (max-width: 900px) {
+            .summary-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 680px) {
+            .admin-container, .teacher-wrapper { padding-left: 12px; padding-right: 12px; }
+            .create-box { flex-direction: column; align-items: stretch; }
+            .create-box .field { min-width: 0; }
+            .two-col { grid-template-columns: 1fr; }
+            .teacher-actions { width: 100%; }
+            .teacher-actions .btn { flex: 1 1 auto; }
+            .summary-grid { grid-template-columns: 1fr 1fr; }
+            .scale-grid { display: flex; overflow-x: auto; padding-bottom: 4px; }
+            .scale-item { min-width: 145px; }
+            .student-hero h1 { font-size: 1.45rem; }
+            .competency-header { align-items: flex-start; }
+            .question-card { padding: 15px 12px; }
+            .rating-row { gap: 5px; }
+            .rating-btn { padding: 10px 2px; }
+            .bottom-inner { align-items: stretch; }
+            .bottom-progress { font-size: .9rem; align-self: center; }
+            .mini-score-grid { grid-template-columns: 1fr; }
+            .insight-grid, .behavior-columns, .group-insight-grid { grid-template-columns: 1fr; }
+            .rank-row { grid-template-columns: 38px minmax(0,1fr) 58px; }
+            .distribution { overflow-x: auto; }
+            .settings-grid { grid-template-columns:1fr; }
+            .scale-editor-row { grid-template-columns:42px 1fr; }
+            .scale-editor-row .scale-desc-field { grid-column:1 / -1; }
+            .competency-editor-head { flex-wrap:wrap; }
+            .item-editor-row { grid-template-columns:30px 1fr; }
+            .item-actions { grid-column:2; }
+            .modal-actions { flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div v-if="isLoading" class="loading-mask">資料載入中...</div>
+    <div v-if="toastMsg" class="toast">{{ toastMsg }}</div>
+
+    <div v-if="confirmModal.show" class="modal-overlay">
+        <div class="modal-box">
+            <h3>⚠️ 確認操作</h3>
+            <p style="line-height:1.65;color:#475569;">{{ confirmModal.message }}</p>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" @click="confirmModal.show=false">取消</button>
+                <button class="btn btn-danger" @click="executeConfirm">確定</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="renameModal.show" class="modal-overlay">
+        <div class="modal-box">
+            <h3>✏️ 重新命名活動</h3>
+            <input class="field" v-model="renameModal.newName" @keydown.enter="executeRename" placeholder="請輸入活動名稱">
+            <div class="modal-actions">
+                <button class="btn btn-secondary" @click="renameModal.show=false">取消</button>
+                <button class="btn btn-primary" @click="executeRename">儲存</button>
+            </div>
+        </div>
+    </div>
+
+    <div v-if="selectedResponse" class="modal-overlay" @click.self="selectedResponse=null">
+        <div class="modal-box detail-modal">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <div>
+                    <h3 style="font-size:1.45rem;">{{ selectedResponse.name }} 的個人結果</h3>
+                    <div style="color:#64748b;">{{ formatDate(selectedResponse.submittedAt) }}</div>
+                </div>
+                <button class="btn btn-outline" @click="selectedResponse=null">關閉</button>
+            </div>
+            <div class="result-note">這裡著重同一位學員各項職能與行為的相對高低，不代表與其他人比較，也不是絕對能力判定。</div>
+            <div class="insight-grid">
+                <div class="insight-card high">
+                    <div class="insight-label">相對較高的職能</div>
+                    <div class="insight-name">{{ responseHighestCompetencies(selectedResponse).map(x=>x.name).join('、') || '—' }}</div>
+                    <div class="insight-score" v-if="responseHighestCompetencies(selectedResponse).length">{{ responseHighestCompetencies(selectedResponse)[0].score.toFixed(2) }} / {{ maxScale }}</div>
+                </div>
+                <div class="insight-card low">
+                    <div class="insight-label">相對較低的職能</div>
+                    <div class="insight-name">{{ responseLowestCompetencies(selectedResponse).map(x=>x.name).join('、') || '—' }}</div>
+                    <div class="insight-score" v-if="responseLowestCompetencies(selectedResponse).length">{{ responseLowestCompetencies(selectedResponse)[0].score.toFixed(2) }} / {{ maxScale }}</div>
+                </div>
+            </div>
+            <div class="result-section">
+                <h3>職能相對排序</h3>
+                <div class="rank-list">
+                    <div v-for="(entry,index) in responseCompetencyRanking(selectedResponse)" :key="'detail_rank_'+entry.id" class="rank-row">
+                        <div class="rank-number">{{ index+1 }}</div>
+                        <div>
+                            <div class="rank-name">{{ entry.name }}</div>
+                            <div class="rank-bar"><div class="rank-bar-fill" :style="{width:(entry.score/maxScale*100)+'%'}"></div></div>
+                        </div>
+                        <div class="rank-score">{{ entry.score.toFixed(2) }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="result-section">
+                <h3>行為相對高低</h3>
+                <div class="behavior-columns">
+                    <div class="behavior-panel">
+                        <h4>相對較高的行為</h4>
+                        <div class="behavior-list">
+                            <div v-for="entry in responseTopBehaviors(selectedResponse)" :key="'detail_high_'+entry.id" class="behavior-item">
+                                <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
+                                <div class="behavior-score">{{ entry.score }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="behavior-panel">
+                        <h4>相對較低、可優先留意的行為</h4>
+                        <div class="behavior-list">
+                            <div v-for="entry in responseBottomBehaviors(selectedResponse)" :key="'detail_low_'+entry.id" class="behavior-item">
+                                <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
+                                <div class="behavior-score">{{ entry.score }}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="result-section">
+                <h3>完整作答明細</h3>
+                <div v-for="comp in competencies" :key="'detail_'+comp.id" style="margin-bottom:20px;">
+                    <h4 style="margin:0 0 8px;color:#075985;">{{ comp.name }}</h4>
+                    <div v-for="item in comp.items" :key="item.id" style="display:grid;grid-template-columns:1fr 48px;gap:10px;padding:9px 0;border-bottom:1px solid #e2e8f0;line-height:1.5;">
+                        <span>{{ item.text }}</span>
+                        <span class="score-badge">{{ selectedResponse.answers?.[item.id] || '-' }}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 後台登入 -->
+    <div v-if="currentView==='login'" class="login-container">
+        <div class="card login-box">
+            <div style="font-size:3rem;margin-bottom:10px;">📊</div>
+            <h1>職能自評管理後台</h1>
+            <p>建立活動、取得學員連結，並即時查看填答結果。</p>
+            <input type="password" class="field" v-model="loginPassword" @keydown.enter="login" placeholder="請輸入管理密碼">
+            <button class="btn btn-primary btn-block" style="padding:13px;" @click="login">登入後台</button>
+        </div>
+    </div>
+
+    <!-- 活動列表 -->
+    <div v-else-if="currentView==='lobby'" class="admin-container">
+        <div class="admin-header">
+            <h1>📊 職能自評線上填答系統</h1>
+            <p>每次課程可建立獨立活動，資料會分開儲存在 Firebase。</p>
+        </div>
+        <div class="card create-box">
+            <input class="field" v-model="newAssessmentName" @keydown.enter="createAssessment" placeholder="輸入新活動名稱，例如：2026 新任主管班職能自評">
+            <button class="btn btn-success" @click="createAssessment">＋ 建立新活動</button>
+        </div>
+        <div class="activity-grid">
+            <div v-for="activity in assessmentsList" :key="activity.id" class="card activity-card">
+                <div class="activity-title">{{ activity.name }}</div>
+                <div class="activity-meta">建立於：{{ formatDate(activity.createdAt) }}</div>
+                <div class="activity-actions">
+                    <a class="btn btn-primary btn-block" :href="getLink(activity.id,'teacher')" target="_blank">👨‍🏫 開啟講師結果後台</a>
+                    <button class="btn btn-warning btn-block" @click="copyLink(activity.id,'student')">🔗 複製學員填答連結</button>
+                    <div class="two-col">
+                        <button class="btn btn-outline-blue" @click="openRename(activity)">✏️ 重新命名</button>
+                        <button class="btn btn-outline-green" @click="duplicateAssessment(activity)">📄 複製活動</button>
+                    </div>
+                    <button class="btn btn-danger btn-block" @click="deleteAssessment(activity.id, activity.name)">🗑️ 刪除活動</button>
+                </div>
+            </div>
+            <div v-if="!isLoading && assessmentsList.length===0" class="empty-box">目前尚未建立任何活動，請由上方新增。</div>
+        </div>
+    </div>
+
+    <!-- 講師結果後台 -->
+    <div v-else-if="currentView==='teacher'" class="teacher-wrapper">
+        <div class="teacher-topbar">
+            <div class="teacher-title">
+                <h1>{{ assessmentSettings.title || '職能自評結果' }}</h1>
+                <p>結果會隨學員完成自評即時更新。</p>
+            </div>
+            <div class="teacher-actions">
+                <span class="status-pill" :class="assessmentSettings.isActive ? 'status-on':'status-off'">
+                    {{ assessmentSettings.isActive ? '🟢 填答開放中' : '🔴 填答已關閉' }}
+                </span>
+                <button v-if="!assessmentSettings.isActive" class="btn btn-success" @click="toggleActive(true)">▶️ 開放填答</button>
+                <button v-else class="btn btn-danger" @click="toggleActive(false)">⏸️ 關閉填答</button>
+                <button class="btn btn-outline" @click="copyLink(assessmentId,'student')">🔗 學員連結</button>
+                <button class="btn btn-outline" @click="exportCsv" :disabled="responseArray.length===0">💾 匯出 CSV</button>
+                <button class="btn btn-danger" @click="clearResponses" :disabled="responseArray.length===0">🗑️ 清空結果</button>
+                <button class="btn btn-primary gear-btn" @click="openSettingsModal" title="題目與計分設定">⚙️</button>
+            </div>
+        </div>
+
+        <div class="summary-grid">
+            <div class="card summary-card green">
+                <div class="summary-label">完成自評人數</div>
+                <div class="summary-value">{{ responseArray.length }}</div>
+            </div>
+            <div class="card summary-card" v-for="comp in competencies" :key="'sum_'+comp.id">
+                <div class="summary-label">{{ comp.name }}平均</div>
+                <div class="summary-value">{{ competencyAverage(comp.id) }}</div>
+            </div>
+        </div>
+
+        <div v-if="responseArray.length" class="group-insight-grid">
+            <div class="insight-card high">
+                <div class="insight-label">本次平均相對較高的職能</div>
+                <div class="insight-name">{{ groupHighestCompetencies.map(x=>x.name).join('、') }}</div>
+                <div class="insight-score">{{ groupHighestCompetencies[0]?.score.toFixed(2) }} / {{ maxScale }}</div>
+            </div>
+            <div class="insight-card low">
+                <div class="insight-label">本次平均相對較低的職能</div>
+                <div class="insight-name">{{ groupLowestCompetencies.map(x=>x.name).join('、') }}</div>
+                <div class="insight-score">{{ groupLowestCompetencies[0]?.score.toFixed(2) }} / {{ maxScale }}</div>
+            </div>
+        </div>
+
+        <div class="tab-bar">
+            <button class="tab-btn" :class="{active:teacherTab==='overview'}" @click="teacherTab='overview'">整體摘要</button>
+            <button class="tab-btn" :class="{active:teacherTab==='items'}" @click="teacherTab='items'">逐題結果</button>
+            <button class="tab-btn" :class="{active:teacherTab==='individual'}" @click="teacherTab='individual'">個人填答</button>
+        </div>
+
+        <div v-if="teacherTab==='overview'" class="card">
+            <h2 class="section-title">職能平均分數</h2>
+            <div v-if="responseArray.length" class="competency-bars">
+                <div v-for="(entry,index) in groupCompetencyRanking" :key="'bar_'+entry.id">
+                    <div class="bar-row-head"><span>第 {{ index+1 }}：{{ entry.name }}</span><span>{{ entry.score.toFixed(2) }} / {{ maxScale }}</span></div>
+                    <div class="bar-track"><div class="bar-fill" :style="{width:(entry.score/maxScale*100)+'%'}"></div></div>
+                </div>
+            </div>
+            <div v-else class="teacher-empty">尚無學員完成自評。</div>
+        </div>
+
+        <div v-else-if="teacherTab==='items'" class="card">
+            <h2 class="section-title">逐題平均與分布</h2>
+            <div v-if="responseArray.length">
+                <div v-for="comp in competencies" :key="'items_'+comp.id" style="margin-bottom:28px;">
+                    <h3 style="color:#075985;margin:0 0 12px;">{{ comp.name }}</h3>
+                    <div v-for="item in comp.items" :key="item.id" class="item-result">
+                        <div class="item-result-head">
+                            <div class="item-result-text">{{ item.text }}</div>
+                            <span class="score-badge">{{ itemAverage(item.id) }}</span>
+                        </div>
+                        <div class="distribution" :style="{gridTemplateColumns:'repeat('+scales.length+',minmax(58px,1fr))'}">
+                            <div v-for="scale in scales" :key="scale.value" class="dist-cell">
+                                <strong>{{ itemDistribution(item.id, scale.value) }}</strong>{{ scale.value }} 分
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div v-else class="teacher-empty">尚無學員完成自評。</div>
+        </div>
+
+        <div v-else class="card">
+            <h2 class="section-title">個人填答清單</h2>
+            <div v-if="responseArray.length" class="table-wrap">
+                <table>
+                    <thead>
+                    <tr>
+                        <th>姓名</th><th>完成時間</th>
+                        <th v-for="comp in competencies" :key="'th_'+comp.id">{{ comp.name }}</th>
+                        <th>相對較高職能</th><th>相對較低職能</th><th>明細</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="res in responseArray" :key="res.id">
+                        <td><strong>{{ res.name }}</strong></td>
+                        <td>{{ formatDate(res.submittedAt) }}</td>
+                        <td v-for="comp in competencies" :key="res.id+'_'+comp.id">{{ responseCompetencyScore(res, comp.id) }}</td>
+                        <td>{{ responseHighestCompetencies(res).map(x=>x.name).join('、') }}</td>
+                        <td>{{ responseLowestCompetencies(res).map(x=>x.name).join('、') }}</td>
+                        <td><button class="btn btn-outline-blue" style="padding:7px 11px;" @click="selectedResponse=res">查看</button></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div v-else class="teacher-empty">尚無學員完成自評。</div>
+        </div>
+        <div v-if="showSettingsModal" class="modal-overlay" @click.self="showSettingsModal=false">
+            <div class="modal-box settings-modal">
+                <div class="settings-head">
+                    <div>
+                        <h3 style="font-size:1.5rem;margin-bottom:5px;">⚙️ 題目與計分設定</h3>
+                        <div class="settings-note">各職能分數固定採「該職能所有行為分數加總 ÷ 該職能行為題數」。新增或刪除題目後，系統會自動依最新題數重新計算。</div>
+                    </div>
+                    <button class="btn btn-outline" @click="showSettingsModal=false">關閉</button>
+                </div>
+
+                <div class="settings-section">
+                    <h4>活動與量表設定</h4>
+                    <div class="settings-grid">
+                        <div class="settings-field">
+                            <label>活動名稱</label>
+                            <input class="field" v-model.trim="localSettings.title" placeholder="請輸入活動名稱">
+                        </div>
+                        <div class="settings-field">
+                            <label>量表分數</label>
+                            <select class="field" v-model.number="localScaleCount" @change="updateScaleCount">
+                                <option v-for="n in 9" :key="n+1" :value="n+1">1～{{ n+1 }} 分量表</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="scale-editor-grid">
+                        <div v-for="scale in localSettings.scales" :key="scale.value" class="scale-editor-row">
+                            <div class="scale-editor-number">{{ scale.value }}</div>
+                            <input class="field" v-model.trim="scale.name" :placeholder="scale.value+' 分名稱'">
+                            <input class="field scale-desc-field" v-model.trim="scale.desc" :placeholder="scale.value+' 分說明'">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+                        <div>
+                            <h4 style="margin-bottom:3px;">職能與行為題目</h4>
+                            <div class="settings-note">可修改職能名稱與題目，並新增、刪除或調整題目順序。</div>
+                        </div>
+                        <button class="btn btn-success" @click="addCompetency">＋ 新增職能</button>
+                    </div>
+
+                    <div v-for="(comp,cIndex) in localSettings.competencies" :key="comp.id" class="competency-editor">
+                        <div class="competency-editor-head">
+                            <input class="field" v-model.trim="comp.name" :placeholder="'職能 '+(cIndex+1)+' 名稱'">
+                            <button class="btn btn-outline icon-btn" @click="moveCompetency(cIndex,-1)" :disabled="cIndex===0" title="向上移">↑</button>
+                            <button class="btn btn-outline icon-btn" @click="moveCompetency(cIndex,1)" :disabled="cIndex===localSettings.competencies.length-1" title="向下移">↓</button>
+                            <button class="btn btn-danger" @click="removeCompetency(cIndex)">刪除職能</button>
+                        </div>
+                        <div class="item-editor-list">
+                            <div v-for="(item,iIndex) in comp.items" :key="item.id" class="item-editor-row">
+                                <div class="item-order">{{ iIndex+1 }}</div>
+                                <textarea class="field" v-model.trim="item.text" placeholder="請輸入行為題目"></textarea>
+                                <div class="item-actions">
+                                    <button class="btn btn-outline icon-btn" @click="moveItem(comp,iIndex,-1)" :disabled="iIndex===0" title="向上移">↑</button>
+                                    <button class="btn btn-outline icon-btn" @click="moveItem(comp,iIndex,1)" :disabled="iIndex===comp.items.length-1" title="向下移">↓</button>
+                                    <button class="btn btn-danger icon-btn" @click="removeItem(comp,iIndex)" title="刪除題目">✕</button>
+                                </div>
+                            </div>
+                            <button class="btn btn-outline-blue btn-block" @click="addItem(comp)">＋ 新增行為題目</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-actions" style="position:sticky;bottom:-28px;background:#fff;padding:14px 0 4px;border-top:1px solid var(--slate-200);">
+                    <button class="btn btn-secondary" @click="showSettingsModal=false">取消</button>
+                    <button class="btn btn-primary" @click="saveSettings">💾 儲存題目與計分設定</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 學員填答 -->
+    <div v-else-if="currentView==='student'" class="student-wrapper">
+        <div v-if="!assessmentSettings.isActive && studentStage!=='submitted'" class="card closed-box">
+            <div style="font-size:3.5rem;">⏳</div>
+            <h2>目前尚未開放填答</h2>
+            <p style="color:#64748b;line-height:1.7;">請稍候，等待講師開放；畫面會自動更新。</p>
+        </div>
+
+        <template v-else-if="studentStage==='submitted'">
+            <div class="card submitted-box">
+                <div class="submitted-icon">🧭</div>
+                <h2>{{ studentForm.name }} 的自評結果</h2>
+                <div class="result-note">請從自己各項職能與行為的相對高低來閱讀結果。這不是與別人比較，也不是用單一高低分判定能力好壞。</div>
+
+                <div class="insight-grid">
+                    <div class="insight-card high">
+                        <div class="insight-label">目前相對較高的職能</div>
+                        <div class="insight-name">{{ studentHighestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
+                        <div class="insight-score" v-if="studentHighestCompetencies.length">{{ studentHighestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
+                    </div>
+                    <div class="insight-card low">
+                        <div class="insight-label">目前相對較低的職能</div>
+                        <div class="insight-name">{{ studentLowestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
+                        <div class="insight-score" v-if="studentLowestCompetencies.length">{{ studentLowestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
+                    </div>
+                </div>
+
+                <div class="result-section">
+                    <h3>職能相對排序</h3>
+                    <div class="rank-list">
+                        <div v-for="(entry,index) in studentCompetencyRanking" :key="'stu_rank_'+entry.id" class="rank-row">
+                            <div class="rank-number">{{ index+1 }}</div>
+                            <div>
+                                <div class="rank-name">{{ entry.name }}</div>
+                                <div class="rank-bar"><div class="rank-bar-fill" :style="{width:(entry.score/maxScale*100)+'%'}"></div></div>
+                            </div>
+                            <div class="rank-score">{{ entry.score.toFixed(2) }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="result-section">
+                    <h3>行為相對高低</h3>
+                    <div v-if="studentBehaviorHasVariation" class="behavior-columns">
+                        <div class="behavior-panel">
+                            <h4>相對較高的行為</h4>
+                            <div class="behavior-list">
+                                <div v-for="entry in studentTopBehaviors" :key="'stu_high_'+entry.id" class="behavior-item">
+                                    <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
+                                    <div class="behavior-score">{{ entry.score }}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="behavior-panel">
+                            <h4>相對較低、可優先留意的行為</h4>
+                            <div class="behavior-list">
+                                <div v-for="entry in studentBottomBehaviors" :key="'stu_low_'+entry.id" class="behavior-item">
+                                    <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
+                                    <div class="behavior-score">{{ entry.score }}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="relative-empty">您目前各題的自評分數相同，因此暫時沒有明顯的相對高低差異。</div>
+                </div>
+
+                <div v-if="answeredCount!==totalItems" style="margin:18px auto 0;max-width:620px;padding:12px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-weight:700;line-height:1.6;">講師已更新題目，請點選「重新檢視自評」完成新增或調整後的題目。</div>
+                <div class="submitted-actions">
+                    <button v-if="assessmentSettings.isActive" class="btn btn-primary" @click="studentStage='form'">✏️ 重新檢視自評</button>
+                    <button class="btn btn-outline" @click="startAnotherResponse">👥 此裝置換另一人填寫</button>
+                </div>
+            </div>
+        </template>
+
+        <template v-else>
+            <div class="card student-hero">
+                <h1>{{ assessmentSettings.title || '職能自評' }}</h1>
+                <p>請依您平時實際展現的行為頻率作答。每題均需選擇 1～{{ maxScale }} 分，完成後即可觀看自己的自評結果。</p>
+                <div class="identity-grid">
+                    <div>
+                        <label>姓名 <span class="required">＊</span></label>
+                        <input class="field" v-model.trim="studentForm.name" placeholder="請輸入姓名">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card scale-card">
+                <h2>評鑑標準（{{ maxScale }} 分量表）</h2>
+                <div class="scale-grid" :style="{gridTemplateColumns:'repeat('+scales.length+',minmax(120px,1fr))'}">
+                    <div v-for="scale in scales" :key="scale.value" class="scale-item">
+                        <div class="scale-number">{{ scale.value }}</div>
+                        <div class="scale-name">{{ scale.name }}</div>
+                        <div class="scale-desc">{{ scale.desc }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card progress-card">
+                <div class="progress-top">
+                    <span>填答進度</span>
+                    <span>{{ answeredCount }} / {{ totalItems }}</span>
+                </div>
+                <div class="progress-track"><div class="progress-fill" :style="{width:progressPercent+'%'}"></div></div>
+            </div>
+
+            <section v-for="comp in competencies" :key="comp.id" class="competency-section">
+                <div class="competency-header">
+                    <h2>{{ comp.name }}</h2>
+                    <span class="competency-count">{{ answeredInCompetency(comp) }} / {{ comp.items.length }}</span>
+                </div>
+                <div v-for="(item,index) in comp.items" :key="item.id" class="question-card">
+                    <div class="question-text">{{ index+1 }}. {{ item.text }}</div>
+                    <div class="rating-row" :style="{gridTemplateColumns:'repeat('+scales.length+',1fr)'}">
+                        <button v-for="scale in scales" :key="scale.value" type="button" class="rating-btn"
+                                :class="{selected:Number(studentForm.answers[item.id])===scale.value}"
+                                @click="setAnswer(item.id, scale.value)">{{ scale.value }}</button>
+                    </div>
+                </div>
+            </section>
+
+            <div class="bottom-action">
+                <div class="bottom-inner">
+                    <div class="bottom-progress">已完成 {{ answeredCount }} / {{ totalItems }} 題</div>
+                    <button class="btn btn-success" style="min-width:160px;" @click="submitResponse" :disabled="isSubmitting">
+                        {{ isSubmitting ? '整理結果中...' : '觀看自評結果' }}
+                    </button>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+const firebaseConfig = {
+    apiKey: "AIzaSyDUPGhkiJgxeYDYHqEaXCYvKh2vdTGqypw",
+    authDomain: "class-discussion-01.firebaseapp.com",
+    databaseURL: "https://class-discussion-01-default-rtdb.firebaseio.com",
+    projectId: "class-discussion-01",
+    storageBucket: "class-discussion-01.firebasestorage.app",
+    messagingSenderId: "724687365020",
+    appId: "1:724687365020:web:380b5d85872dc2d9b85e59",
+    measurementId: "G-XYN5JV48T7"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+const DEFAULT_COMPETENCIES = [
+    {
+        id: 'planning', name: '計劃與組織', items: [
+            { id: 'p1', text: '我能夠精準分辨較重要及次重要的任務。' },
+            { id: 'p2', text: '我會依據任務的重要程度調整處理的優先順序。' },
+            { id: 'p3', text: '我工作時會將任務細分為工作細項，列出所需的設備、物料及人力，並與內部及外部夥伴協調。' },
+            { id: 'p4', text: '我會排定時程進度，透過分配適當的時間來完成個人及他人的任務，來避免時間衝突。' },
+            { id: 'p5', text: '我會為我的每項工作，設定任務完成的期限及里程碑。' },
+            { id: 'p6', text: '為了有效地完成工作，我能夠善用各種可得的資源（如：人力、流程、單位及設備等）。' },
+            { id: 'p7', text: '我能夠保持專注、且有效地運用時間，或防止不相關的事情轉移注意力、影響工作完成。' }
+        ]
+    },
+    {
+        id: 'decision', name: '決策能力', items: [
+            { id: 'd1', text: '我會主動找出問題或機會，決定是否有需要採取行動。' },
+            { id: 'd2', text: '遇到問題時我會收集資料以更瞭解所面對的議題或機會。' },
+            { id: 'd3', text: '做決定前，我會整合不同來源的資料，從中發現趨勢性、關聯性及因果關係。' },
+            { id: 'd4', text: '我會針對找出的問題或機會，發展多重可行方案，以達期望之結果。' },
+            { id: 'd5', text: '在解決方案的選擇上，我會訂定明確的決策標準，包括成本及利益。' },
+            { id: 'd6', text: '我會根據決策標準，考量決策方案可能產生的影響或結果，才去選擇最有效的方案。' },
+            { id: 'd7', text: '付諸執行時，我會在合理的時間內做出決策並施行。' },
+            { id: 'd8', text: '有必要時，會廣邀大家共同參與決定。' }
+        ]
+    },
+    {
+        id: 'expression', name: '表達', items: [
+            { id: 'e1', text: '我能有條理組織性的溝通，具體闡明目標及重要性、強調重點、或有邏輯架構的表達。' },
+            { id: 'e2', text: '我能維持聽眾的注意力，藉由例如類比、舉例、肢體語言、聲音變化等技巧，使聽眾專注。' },
+            { id: 'e3', text: '我會隨著聽眾調整，根據聽眾的經驗、背景與期望，使用對其有意義的術語、範例、類比。' },
+            { id: 'e4', text: '我會確認聽眾的理解，透過尋求聽眾的參與、確認其理解程度，多用不同方式來說明，以增強理解。' },
+            { id: 'e5', text: '我會大家習慣的方式，使用適宜的語法、速度、音量、措詞、技巧。' },
+            { id: 'e6', text: '我能理解他人的溝通、注意他人的訊息、正確解釋並適宜地回應。' }
+        ]
+    }
+];
+
+const DEFAULT_SCALES = [
+    { value: 1, name: '完全沒有展現', desc: '完全沒有展現題目中所描述的行為（頻率 0%）' },
+    { value: 2, name: '很少展現', desc: '少有這項行為，且仍有很大的改進空間（頻率 25%）' },
+    { value: 3, name: '普通', desc: '能展現題目中所描述的行為（頻率 50%）' },
+    { value: 4, name: '常常展現', desc: '經常展現題目中所描述的行為（頻率 75%）' },
+    { value: 5, name: '總是展現', desc: '總是且稱職展現題目中所描述的行為（頻率 100%）' }
+];
+
+const cloneData = value => JSON.parse(JSON.stringify(value));
+
+createApp({
+    data() {
+        return {
+            isLoading: true,
+            currentView: 'login',
+            loginPassword: '',
+            assessmentId: '',
+            assessmentsList: [],
+            newAssessmentName: '',
+            assessmentSettings: { title: '', isActive: false, createdAt: 0 },
+            responses: {},
+            teacherTab: 'overview',
+            selectedResponse: null,
+            toastMsg: '',
+            confirmModal: { show: false, message: '', action: null },
+            renameModal: { show: false, id: '', newName: '' },
+            competencies: cloneData(DEFAULT_COMPETENCIES),
+            scales: cloneData(DEFAULT_SCALES),
+            showSettingsModal: false,
+            localSettings: { title: '', competencies: [], scales: [] },
+            localScaleCount: 5,
+            studentForm: { name: '', answers: {} },
+            studentStage: 'form',
+            submissionId: '',
+            isSubmitting: false,
+            draftSaveTimer: null,
+            studentStateRestored: false
+        };
+    },
+    computed: {
+        allItems() { return this.competencies.flatMap(c => c.items || []); },
+        maxScale() { return this.scales.length ? Math.max(...this.scales.map(s => Number(s.value) || 0)) : 5; },
+        totalItems() { return this.allItems.length; },
+        answeredCount() { return this.allItems.filter(item => Number(this.studentForm.answers[item.id]) >= 1 && Number(this.studentForm.answers[item.id]) <= this.maxScale).length; },
+        progressPercent() { return this.totalItems ? Math.round(this.answeredCount / this.totalItems * 100) : 0; },
+        responseArray() {
+            return Object.keys(this.responses || {}).map(id => ({ id, ...this.responses[id] }))
+                .sort((a,b) => (b.submittedAt || 0) - (a.submittedAt || 0));
+        },
+        groupCompetencyRanking() {
+            return this.competencies.map((comp,index) => ({
+                id: comp.id,
+                name: comp.name,
+                score: Number(this.competencyAverage(comp.id)),
+                originalIndex: index
+            })).sort((a,b) => b.score - a.score || a.originalIndex - b.originalIndex);
+        },
+        groupHighestCompetencies() {
+            if (!this.groupCompetencyRanking.length) return [];
+            const highest = this.groupCompetencyRanking[0].score;
+            return this.groupCompetencyRanking.filter(x => Math.abs(x.score - highest) < 0.0001);
+        },
+        groupLowestCompetencies() {
+            if (!this.groupCompetencyRanking.length) return [];
+            const lowest = this.groupCompetencyRanking[this.groupCompetencyRanking.length - 1].score;
+            return this.groupCompetencyRanking.filter(x => Math.abs(x.score - lowest) < 0.0001);
+        },
+        studentCompetencyRanking() {
+            return this.buildCompetencyRanking(this.studentForm.answers);
+        },
+        studentHighestCompetencies() {
+            return this.pickHighestCompetencies(this.studentCompetencyRanking);
+        },
+        studentLowestCompetencies() {
+            return this.pickLowestCompetencies(this.studentCompetencyRanking);
+        },
+        studentBehaviorRanking() {
+            return this.buildBehaviorRanking(this.studentForm.answers);
+        },
+        studentTopBehaviors() {
+            return this.studentBehaviorRanking.slice(0, 3);
+        },
+        studentBottomBehaviors() {
+            return [...this.studentBehaviorRanking].sort((a,b) => a.score - b.score || a.originalIndex - b.originalIndex).slice(0, 3);
+        },
+        studentBehaviorHasVariation() {
+            if (!this.studentBehaviorRanking.length) return false;
+            return this.studentBehaviorRanking[0].score !== this.studentBehaviorRanking[this.studentBehaviorRanking.length - 1].score;
+        }
+    },
+    watch: {
+        studentForm: {
+            deep: true,
+            handler() {
+                if (this.currentView !== 'student' || !this.assessmentId || this.studentStage === 'submitted') return;
+                clearTimeout(this.draftSaveTimer);
+                this.draftSaveTimer = setTimeout(() => {
+                    localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm));
+                }, 250);
+            }
+        }
+    },
+    mounted() {
+        const params = new URLSearchParams(window.location.search);
+        const id = params.get('assessment');
+        const role = params.get('role');
+        if (!id) {
+            this.currentView = 'login';
+            this.isLoading = false;
+            return;
+        }
+        this.assessmentId = id;
+        this.currentView = role === 'teacher' ? 'teacher' : 'student';
+        this.bindActivity();
+    },
+    methods: {
+        showMessage(msg) {
+            this.toastMsg = msg;
+            setTimeout(() => { if (this.toastMsg === msg) this.toastMsg = ''; }, 3000);
+        },
+        askConfirm(message, action) {
+            this.confirmModal = { show: true, message, action };
+        },
+        executeConfirm() {
+            const action = this.confirmModal.action;
+            this.confirmModal = { show: false, message: '', action: null };
+            if (action) action();
+        },
+        login() {
+            if (this.loginPassword !== '20150117') {
+                this.showMessage('❌ 密碼錯誤，請重新輸入');
+                this.loginPassword = '';
+                return;
+            }
+            this.currentView = 'lobby';
+            this.isLoading = true;
+            db.ref('selfAssessmentsList').on('value', snap => {
+                const val = snap.val() || {};
+                this.assessmentsList = Object.keys(val).map(id => ({ id, ...val[id] })).sort((a,b) => b.createdAt - a.createdAt);
+                this.isLoading = false;
+            }, err => {
+                this.isLoading = false;
+                this.showMessage('❌ 無法讀取活動：' + err.message);
+            });
+        },
+        createAssessment() {
+            const name = this.newAssessmentName.trim();
+            if (!name) { this.showMessage('請先輸入活動名稱'); return; }
+            const ref = db.ref('selfAssessmentsList').push();
+            const data = { name, createdAt: Date.now() };
+            Promise.all([
+                ref.set(data),
+                db.ref(`selfAssessments/${ref.key}/settings`).set({ title: name, createdAt: data.createdAt, isActive: false, competencies: cloneData(DEFAULT_COMPETENCIES), scales: cloneData(DEFAULT_SCALES) })
+            ]).then(() => {
+                this.newAssessmentName = '';
+                this.showMessage('✅ 活動建立成功');
+            }).catch(err => this.showMessage('❌ 建立失敗：' + err.message));
+        },
+        openRename(activity) {
+            this.renameModal = { show: true, id: activity.id, newName: activity.name };
+        },
+        executeRename() {
+            const name = this.renameModal.newName.trim();
+            if (!name) { this.showMessage('活動名稱不可空白'); return; }
+            const id = this.renameModal.id;
+            Promise.all([
+                db.ref(`selfAssessmentsList/${id}`).update({ name }),
+                db.ref(`selfAssessments/${id}/settings`).update({ title: name })
+            ]).then(() => {
+                this.renameModal.show = false;
+                this.showMessage('✅ 已重新命名');
+            }).catch(err => this.showMessage('❌ 重新命名失敗：' + err.message));
+        },
+        duplicateAssessment(activity) {
+            this.askConfirm(`確定要複製活動「${activity.name}」嗎？題目與計分設定會一併複製，但不會帶入原填答結果。`, () => {
+                this.isLoading = true;
+                db.ref(`selfAssessments/${activity.id}/settings`).once('value').then(snap => {
+                    const original = snap.val() || {};
+                    const name = activity.name + '（複製）';
+                    const ref = db.ref('selfAssessmentsList').push();
+                    const createdAt = Date.now();
+                    return Promise.all([
+                        ref.set({ name, createdAt }),
+                        db.ref(`selfAssessments/${ref.key}/settings`).set({
+                            ...original,
+                            title: name,
+                            createdAt,
+                            isActive: false,
+                            competencies: cloneData(original.competencies || DEFAULT_COMPETENCIES),
+                            scales: cloneData(original.scales || DEFAULT_SCALES)
+                        })
+                    ]);
+                }).then(() => this.showMessage('✅ 活動已複製'))
+                  .catch(err => this.showMessage('❌ 複製失敗：' + err.message))
+                  .finally(() => this.isLoading = false);
+            });
+        },
+        deleteAssessment(id, name) {
+            this.askConfirm(`確定刪除「${name}」？活動與所有填答結果都會一併刪除，且無法復原。`, () => {
+                Promise.all([
+                    db.ref(`selfAssessmentsList/${id}`).remove(),
+                    db.ref(`selfAssessments/${id}`).remove()
+                ]).then(() => this.showMessage('🗑️ 活動已刪除'))
+                  .catch(err => this.showMessage('❌ 刪除失敗：' + err.message));
+            });
+        },
+        getLink(id, role) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('assessment', id);
+            if (role === 'teacher') url.searchParams.set('role', 'teacher');
+            else url.searchParams.delete('role');
+            return url.href;
+        },
+        async copyLink(id, role) {
+            const link = this.getLink(id, role);
+            try {
+                await navigator.clipboard.writeText(link);
+            } catch (_) {
+                const input = document.createElement('input');
+                input.value = link; document.body.appendChild(input); input.select();
+                document.execCommand('copy'); input.remove();
+            }
+            this.showMessage('✅ 連結已複製');
+        },
+        bindActivity() {
+            db.ref(`selfAssessments/${this.assessmentId}/settings`).on('value', snap => {
+                const val = snap.val();
+                if (!val) {
+                    this.isLoading = false;
+                    this.showMessage('找不到此活動，或活動已被刪除');
+                    return;
+                }
+                const competencies = Array.isArray(val.competencies) && val.competencies.length ? cloneData(val.competencies) : cloneData(DEFAULT_COMPETENCIES);
+                const scales = Array.isArray(val.scales) && val.scales.length >= 2 ? cloneData(val.scales) : cloneData(DEFAULT_SCALES);
+                this.assessmentSettings = { title: '', isActive: false, ...val, competencies, scales };
+                this.competencies = competencies;
+                this.scales = scales.map((s, index) => ({ value: index + 1, name: s.name || `${index+1} 分`, desc: s.desc || '' }));
+                document.title = `${this.assessmentSettings.title}｜職能自評`; 
+                if (this.currentView === 'student' && !this.studentStateRestored) this.restoreStudentState();
+                this.isLoading = false;
+            }, err => {
+                this.isLoading = false;
+                this.showMessage('❌ 讀取活動失敗：' + err.message);
+            });
+            if (this.currentView === 'teacher') {
+                db.ref(`selfAssessments/${this.assessmentId}/responses`).on('value', snap => {
+                    this.responses = snap.val() || {};
+                });
+            }
+        },
+        makeId(prefix) {
+            return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
+        },
+        openSettingsModal() {
+            this.localSettings = {
+                title: this.assessmentSettings.title || '',
+                competencies: cloneData(this.competencies),
+                scales: cloneData(this.scales)
+            };
+            this.localScaleCount = this.localSettings.scales.length || 5;
+            this.showSettingsModal = true;
+        },
+        updateScaleCount() {
+            const count = Math.max(2, Math.min(10, Number(this.localScaleCount) || 5));
+            const old = this.localSettings.scales || [];
+            this.localSettings.scales = Array.from({ length: count }, (_, index) => {
+                const found = old[index];
+                return found ? { ...found, value: index + 1 } : { value: index + 1, name: `${index+1} 分`, desc: '' };
+            });
+        },
+        addCompetency() {
+            this.localSettings.competencies.push({ id: this.makeId('comp'), name: '新職能', items: [{ id: this.makeId('item'), text: '' }] });
+        },
+        removeCompetency(index) {
+            if (this.localSettings.competencies.length <= 1) { this.showMessage('⚠️ 至少需保留一項職能'); return; }
+            this.localSettings.competencies.splice(index, 1);
+        },
+        moveCompetency(index, direction) {
+            const target = index + direction;
+            if (target < 0 || target >= this.localSettings.competencies.length) return;
+            const list = this.localSettings.competencies;
+            [list[index], list[target]] = [list[target], list[index]];
+        },
+        addItem(comp) {
+            comp.items.push({ id: this.makeId('item'), text: '' });
+        },
+        removeItem(comp, index) {
+            if (comp.items.length <= 1) { this.showMessage('⚠️ 每項職能至少需保留一個行為題目'); return; }
+            comp.items.splice(index, 1);
+        },
+        moveItem(comp, index, direction) {
+            const target = index + direction;
+            if (target < 0 || target >= comp.items.length) return;
+            [comp.items[index], comp.items[target]] = [comp.items[target], comp.items[index]];
+        },
+        saveSettings() {
+            const title = (this.localSettings.title || '').trim();
+            if (!title) { this.showMessage('⚠️ 活動名稱不可空白'); return; }
+            if (!this.localSettings.competencies.length) { this.showMessage('⚠️ 至少需要一項職能'); return; }
+            for (const comp of this.localSettings.competencies) {
+                comp.name = (comp.name || '').trim();
+                if (!comp.name) { this.showMessage('⚠️ 職能名稱不可空白'); return; }
+                if (!Array.isArray(comp.items) || !comp.items.length) { this.showMessage(`⚠️「${comp.name}」至少需要一個行為題目`); return; }
+                for (const item of comp.items) {
+                    item.text = (item.text || '').trim();
+                    if (!item.text) { this.showMessage(`⚠️「${comp.name}」中有空白題目`); return; }
+                    if (!item.id) item.id = this.makeId('item');
+                }
+                if (!comp.id) comp.id = this.makeId('comp');
+            }
+            this.updateScaleCount();
+            for (const scale of this.localSettings.scales) {
+                scale.name = (scale.name || '').trim() || `${scale.value} 分`;
+                scale.desc = (scale.desc || '').trim();
+            }
+            const payload = {
+                title,
+                competencies: cloneData(this.localSettings.competencies),
+                scales: cloneData(this.localSettings.scales),
+                settingsUpdatedAt: Date.now()
+            };
+            const performSave = () => {
+                Promise.all([
+                    db.ref(`selfAssessments/${this.assessmentId}/settings`).update(payload),
+                    db.ref(`selfAssessmentsList/${this.assessmentId}`).update({ name: title })
+                ]).then(() => {
+                    this.showSettingsModal = false;
+                    this.showMessage('✅ 題目與計分設定已儲存');
+                }).catch(err => this.showMessage('❌ 儲存失敗：' + err.message));
+            };
+            if (this.responseArray.length) {
+                this.askConfirm('目前已有學員填答。儲存後，講師端結果會依最新題目與計分設定重新計算；新增題目後，已填答者需再進入修改並完成新題目。確定儲存嗎？', performSave);
+            } else {
+                performSave();
+            }
+        },
+        toggleActive(state) {
+            db.ref(`selfAssessments/${this.assessmentId}/settings/isActive`).set(state)
+                .then(() => this.showMessage(state ? '✅ 已開放學員填答' : '⏸️ 已關閉學員填答'))
+                .catch(err => this.showMessage('❌ 更新失敗：' + err.message));
+        },
+        clearResponses() {
+            this.askConfirm('確定要清空本活動的所有學員填答？此動作無法復原。', () => {
+                db.ref(`selfAssessments/${this.assessmentId}/responses`).remove()
+                    .then(() => this.showMessage('🗑️ 填答結果已清空'))
+                    .catch(err => this.showMessage('❌ 清空失敗：' + err.message));
+            });
+        },
+        draftKey() { return `self_assessment_draft_${this.assessmentId}`; },
+        submissionKey() { return `self_assessment_submission_${this.assessmentId}`; },
+        restoreStudentState() {
+            if (this.studentStateRestored || this.submissionId || this.studentStage === 'submitted') return;
+            this.studentStateRestored = true;
+            const savedSubmission = localStorage.getItem(this.submissionKey());
+            const draft = localStorage.getItem(this.draftKey());
+            if (draft) {
+                try {
+                    const parsed = JSON.parse(draft);
+                    this.studentForm = { name: parsed.name || '', answers: parsed.answers || {} };
+                } catch (_) {}
+            }
+            if (savedSubmission) {
+                this.submissionId = savedSubmission;
+                db.ref(`selfAssessments/${this.assessmentId}/responses/${savedSubmission}`).once('value').then(snap => {
+                    const val = snap.val();
+                    if (val) {
+                        this.studentForm = { name: val.name || '', answers: val.answers || {} };
+                        this.studentStage = 'submitted';
+                    } else {
+                        localStorage.removeItem(this.submissionKey());
+                        this.submissionId = '';
+                    }
+                });
+            }
+        },
+        setAnswer(itemId, score) {
+            this.studentForm.answers[itemId] = score;
+        },
+        answeredInCompetency(comp) {
+            return comp.items.filter(i => { const v = Number(this.studentForm.answers[i.id]); return v >= 1 && v <= this.maxScale; }).length;
+        },
+        calculateCompetency(answers, competencyId) {
+            const comp = this.competencies.find(c => c.id === competencyId);
+            if (!comp || !Array.isArray(comp.items) || !comp.items.length) return 0;
+            const sum = comp.items.reduce((total, item) => {
+                const value = Number(answers?.[item.id]);
+                return total + (value >= 1 && value <= this.maxScale ? value : 0);
+            }, 0);
+            return sum / comp.items.length;
+        },
+        buildCompetencyRanking(answers) {
+            return this.competencies.map((comp,index) => ({
+                id: comp.id,
+                name: comp.name,
+                score: Number(this.calculateCompetency(answers || {}, comp.id).toFixed(2)),
+                originalIndex: index
+            })).sort((a,b) => b.score - a.score || a.originalIndex - b.originalIndex);
+        },
+        pickHighestCompetencies(ranking) {
+            if (!ranking || !ranking.length) return [];
+            const highest = ranking[0].score;
+            return ranking.filter(x => Math.abs(x.score - highest) < 0.0001);
+        },
+        pickLowestCompetencies(ranking) {
+            if (!ranking || !ranking.length) return [];
+            const lowest = ranking[ranking.length - 1].score;
+            return ranking.filter(x => Math.abs(x.score - lowest) < 0.0001);
+        },
+        buildBehaviorRanking(answers) {
+            let originalIndex = 0;
+            return this.competencies.flatMap(comp => (comp.items || []).map(item => {
+                const entry = {
+                    id: item.id,
+                    text: item.text,
+                    competencyId: comp.id,
+                    competencyName: comp.name,
+                    score: Number(answers?.[item.id]),
+                    originalIndex: originalIndex++
+                };
+                return entry;
+            })).filter(x => x.score >= 1 && x.score <= this.maxScale)
+              .sort((a,b) => b.score - a.score || a.originalIndex - b.originalIndex);
+        },
+        responseCompetencyRanking(response) {
+            return this.buildCompetencyRanking(response?.answers || {});
+        },
+        responseHighestCompetencies(response) {
+            return this.pickHighestCompetencies(this.responseCompetencyRanking(response));
+        },
+        responseLowestCompetencies(response) {
+            return this.pickLowestCompetencies(this.responseCompetencyRanking(response));
+        },
+        responseTopBehaviors(response) {
+            return this.buildBehaviorRanking(response?.answers || {}).slice(0, 3);
+        },
+        responseBottomBehaviors(response) {
+            return this.buildBehaviorRanking(response?.answers || {})
+                .sort((a,b) => a.score - b.score || a.originalIndex - b.originalIndex)
+                .slice(0, 3);
+        },
+        studentCompetencyAverage(id) { return this.calculateCompetency(this.studentForm.answers, id).toFixed(2); },
+        submitResponse() {
+            if (!this.assessmentSettings.isActive) { this.showMessage('⚠️ 本活動目前已關閉填答'); return; }
+            if (!this.studentForm.name.trim()) { this.showMessage('⚠️ 請先填寫姓名'); window.scrollTo({top:0,behavior:'smooth'}); return; }
+            if (this.answeredCount !== this.totalItems) {
+                const missing = this.totalItems - this.answeredCount;
+                this.showMessage(`⚠️ 還有 ${missing} 題尚未作答`);
+                return;
+            }
+            this.isSubmitting = true;
+            if (!this.submissionId) this.submissionId = db.ref(`selfAssessments/${this.assessmentId}/responses`).push().key;
+            const compAverages = {};
+            this.competencies.forEach(c => compAverages[c.id] = Number(this.calculateCompetency(this.studentForm.answers, c.id).toFixed(2)));
+            const oldSubmittedAtPromise = db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}/submittedAt`).once('value');
+            oldSubmittedAtPromise.then(snap => {
+                const payload = {
+                    name: this.studentForm.name.trim(),
+                    answers: { ...this.studentForm.answers },
+                    competencyAverages: compAverages,
+                    submittedAt: snap.val() || Date.now(),
+                    updatedAt: Date.now()
+                };
+                return db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}`).set(payload);
+            }).then(() => {
+                localStorage.setItem(this.submissionKey(), this.submissionId);
+                localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm));
+                this.studentStage = 'submitted';
+                window.scrollTo({top:0,behavior:'smooth'});
+            }).catch(err => this.showMessage('❌ 暫時無法開啟結果：' + err.message))
+              .finally(() => this.isSubmitting = false);
+        },
+        startAnotherResponse() {
+            this.askConfirm('確定要在這個裝置換另一人填寫嗎？目前這一份自評資料仍會保留。', () => {
+                localStorage.removeItem(this.submissionKey());
+                localStorage.removeItem(this.draftKey());
+                this.submissionId = '';
+                this.studentForm = { name: '', answers: {} };
+                this.studentStage = 'form';
+                window.scrollTo({top:0,behavior:'smooth'});
+            });
+        },
+        competencyAverage(id) {
+            if (!this.responseArray.length) return '0.00';
+            const avg = this.responseArray.reduce((sum,r) => sum + this.calculateCompetency(r.answers || {}, id), 0) / this.responseArray.length;
+            return avg.toFixed(2);
+        },
+        responseCompetencyScore(response, id) {
+            return Number(this.calculateCompetency(response.answers || {}, id)).toFixed(2);
+        },
+        displayScore(value) { return Number(value || 0).toFixed(2); },
+        itemAverage(itemId) {
+            if (!this.responseArray.length) return '0.00';
+            const vals = this.responseArray.map(r => Number(r.answers?.[itemId])).filter(v => v >= 1 && v <= this.maxScale);
+            return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : '0.00';
+        },
+        itemDistribution(itemId, score) {
+            return this.responseArray.filter(r => Number(r.answers?.[itemId]) === score).length;
+        },
+        formatDate(ts) {
+            if (!ts) return '-';
+            return new Date(ts).toLocaleString('zh-TW', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+        },
+        csvEscape(value) {
+            const s = String(value ?? '');
+            return `"${s.replace(/"/g,'""')}"`;
+        },
+        exportCsv() {
+            if (!this.responseArray.length) { this.showMessage('目前沒有資料可匯出'); return; }
+            const headers = ['姓名','完成時間', ...this.competencies.map(c => `${c.name}平均`), '相對較高職能', '相對較低職能', ...this.allItems.map((i,idx) => `第${idx+1}題_${i.text}`)];
+            const rows = this.responseArray.map(r => [
+                r.name,
+                this.formatDate(r.submittedAt),
+                ...this.competencies.map(c => this.responseCompetencyScore(r,c.id)),
+                this.responseHighestCompetencies(r).map(x=>x.name).join('、'),
+                this.responseLowestCompetencies(r).map(x=>x.name).join('、'),
+                ...this.allItems.map(i => r.answers?.[i.id] || '')
+            ]);
+            const csv = '\ufeff' + [headers, ...rows].map(row => row.map(this.csvEscape).join(',')).join('\r\n');
+            const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `職能自評結果_${this.assessmentSettings.title || '活動'}_${new Date().toISOString().slice(0,10)}.csv`;
+            document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+            this.showMessage('💾 CSV 已匯出');
+        }
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
