@@ -7,6 +7,7 @@
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         :root {
             --blue: #0ea5e9;
@@ -589,64 +590,67 @@
 
         <template v-else-if="studentStage==='submitted'">
             <div class="card submitted-box">
-                <div class="submitted-icon">🧭</div>
-                <h2>{{ studentForm.name }} 的自評結果</h2>
-                <div class="result-note">請從自己各項職能與行為的相對高低來閱讀結果。這不是與別人比較，也不是用單一高低分判定能力好壞。</div>
+                <div ref="studentResultCapture" class="student-result-capture">
+                    <div class="submitted-icon">🧭</div>
+                    <h2>{{ studentForm.name }} 的自評結果</h2>
+                    <div class="result-note">請從自己各項職能與行為的相對高低來閱讀結果。這不是與別人比較，也不是用單一高低分判定能力好壞。</div>
 
-                <div class="insight-grid">
-                    <div class="insight-card high">
-                        <div class="insight-label">目前相對較高的職能</div>
-                        <div class="insight-name">{{ studentHighestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
-                        <div class="insight-score" v-if="studentHighestCompetencies.length">{{ studentHighestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
-                    </div>
-                    <div class="insight-card low">
-                        <div class="insight-label">目前相對較低的職能</div>
-                        <div class="insight-name">{{ studentLowestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
-                        <div class="insight-score" v-if="studentLowestCompetencies.length">{{ studentLowestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
-                    </div>
-                </div>
-
-                <div class="result-section">
-                    <h3>職能相對排序</h3>
-                    <div class="rank-list">
-                        <div v-for="(entry,index) in studentCompetencyRanking" :key="'stu_rank_'+entry.id" class="rank-row">
-                            <div class="rank-number">{{ index+1 }}</div>
-                            <div>
-                                <div class="rank-name">{{ entry.name }}</div>
-                                <div class="rank-bar"><div class="rank-bar-fill" :style="{width:(entry.score/maxScale*100)+'%'}"></div></div>
-                            </div>
-                            <div class="rank-score">{{ entry.score.toFixed(2) }}</div>
+                    <div class="insight-grid">
+                        <div class="insight-card high">
+                            <div class="insight-label">目前相對較高的職能</div>
+                            <div class="insight-name">{{ studentHighestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
+                            <div class="insight-score" v-if="studentHighestCompetencies.length">{{ studentHighestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
+                        </div>
+                        <div class="insight-card low">
+                            <div class="insight-label">目前相對較低的職能</div>
+                            <div class="insight-name">{{ studentLowestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
+                            <div class="insight-score" v-if="studentLowestCompetencies.length">{{ studentLowestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
                         </div>
                     </div>
-                </div>
 
-                <div class="result-section">
-                    <h3>行為相對高低</h3>
-                    <div v-if="studentBehaviorHasVariation" class="behavior-columns">
-                        <div class="behavior-panel">
-                            <h4>相對較高的行為</h4>
-                            <div class="behavior-list">
-                                <div v-for="entry in studentTopBehaviors" :key="'stu_high_'+entry.id" class="behavior-item">
-                                    <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
-                                    <div class="behavior-score">{{ entry.score }}</div>
+                    <div class="result-section">
+                        <h3>職能相對排序</h3>
+                        <div class="rank-list">
+                            <div v-for="(entry,index) in studentCompetencyRanking" :key="'stu_rank_'+entry.id" class="rank-row">
+                                <div class="rank-number">{{ index+1 }}</div>
+                                <div>
+                                    <div class="rank-name">{{ entry.name }}</div>
+                                    <div class="rank-bar"><div class="rank-bar-fill" :style="{width:(entry.score/maxScale*100)+'%'}"></div></div>
+                                </div>
+                                <div class="rank-score">{{ entry.score.toFixed(2) }}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="result-section">
+                        <h3>行為相對高低</h3>
+                        <div v-if="studentBehaviorHasVariation" class="behavior-columns">
+                            <div class="behavior-panel">
+                                <h4>相對較高的行為</h4>
+                                <div class="behavior-list">
+                                    <div v-for="entry in studentTopBehaviors" :key="'stu_high_'+entry.id" class="behavior-item">
+                                        <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
+                                        <div class="behavior-score">{{ entry.score }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="behavior-panel">
+                                <h4>相對較低、可優先留意的行為</h4>
+                                <div class="behavior-list">
+                                    <div v-for="entry in studentBottomBehaviors" :key="'stu_low_'+entry.id" class="behavior-item">
+                                        <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
+                                        <div class="behavior-score">{{ entry.score }}</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                        <div class="behavior-panel">
-                            <h4>相對較低、可優先留意的行為</h4>
-                            <div class="behavior-list">
-                                <div v-for="entry in studentBottomBehaviors" :key="'stu_low_'+entry.id" class="behavior-item">
-                                    <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
-                                    <div class="behavior-score">{{ entry.score }}</div>
-                                </div>
-                            </div>
-                        </div>
+                        <div v-else class="relative-empty">您目前各題的自評分數相同，因此暫時沒有明顯的相對高低差異。</div>
                     </div>
-                    <div v-else class="relative-empty">您目前各題的自評分數相同，因此暫時沒有明顯的相對高低差異。</div>
-                </div>
 
-                <div v-if="answeredCount!==totalItems" style="margin:18px auto 0;max-width:620px;padding:12px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-weight:700;line-height:1.6;">講師已更新題目，請點選「重新檢視自評」完成新增或調整後的題目。</div>
+                    <div v-if="answeredCount!==totalItems" style="margin:18px auto 0;max-width:620px;padding:12px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-weight:700;line-height:1.6;">講師已更新題目，請點選「重新檢視自評」完成新增或調整後的題目。</div>
+                </div>
                 <div class="submitted-actions">
+                    <button class="btn btn-outline-blue" @click="exportStudentResultPng" :disabled="isExportingPng">{{ isExportingPng ? '匯出中...' : '🖼️ 匯出結果 PNG' }}</button>
                     <button v-if="assessmentSettings.isActive" class="btn btn-primary" @click="studentStage='form'">✏️ 重新檢視自評</button>
                     <button class="btn btn-outline" @click="startAnotherResponse">👥 此裝置換另一人填寫</button>
                 </div>
@@ -799,7 +803,8 @@ createApp({
             submissionId: '',
             isSubmitting: false,
             draftSaveTimer: null,
-            studentStateRestored: false
+            studentStateRestored: false,
+            isExportingPng: false
         };
     },
     computed: {
@@ -1243,6 +1248,41 @@ createApp({
                 this.studentStage = 'form';
                 window.scrollTo({top:0,behavior:'smooth'});
             });
+        },
+        async exportStudentResultPng() {
+            if (this.isExportingPng) return;
+            const target = this.$refs.studentResultCapture;
+            if (!target) { this.showMessage('❌ 找不到可匯出的結果畫面'); return; }
+            if (typeof html2canvas !== 'function') { this.showMessage('❌ PNG 匯出功能載入失敗，請稍後再試'); return; }
+            this.isExportingPng = true;
+            try {
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const canvas = await html2canvas(target, {
+                    backgroundColor: '#ffffff',
+                    scale: Math.max(2, Math.min(3, window.devicePixelRatio || 1)),
+                    useCORS: true,
+                    logging: false,
+                    scrollX: 0,
+                    scrollY: -window.scrollY,
+                    windowWidth: document.documentElement.clientWidth
+                });
+                const fileName = `職能自評結果_${(this.assessmentSettings.title || '活動').replace(/[\/:*?"<>|]/g, '_')}_${(this.studentForm.name || '學員').replace(/[\/:*?"<>|]/g, '_')}.png`;
+                const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+                if (!blob) throw new Error('無法建立 PNG 檔案');
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = fileName;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                this.showMessage('🖼️ PNG 圖檔已匯出');
+            } catch (err) {
+                this.showMessage('❌ PNG 匯出失敗：' + (err?.message || err));
+            } finally {
+                this.isExportingPng = false;
+            }
         },
         competencyAverage(id) {
             if (!this.responseArray.length) return '0.00';
