@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>職能自評線上填答系統</title>
+    <title>全面性自評線上填答系統</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <style>
         :root {
             --blue: #0ea5e9;
@@ -262,6 +263,30 @@
             .item-actions { grid-column:2; }
             .modal-actions { flex-wrap: wrap; }
         }
+    
+        /* 全面性自評新增樣式 */
+        .preset-row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+        .preset-hint { color:var(--slate-500); line-height:1.6; font-size:.9rem; }
+        .settings-field textarea.field { min-height:92px; resize:vertical; line-height:1.6; }
+        .settings-field.full { grid-column:1 / -1; }
+        .check-row { display:flex; align-items:flex-start; gap:9px; padding:11px 12px; border:1px solid var(--slate-200); border-radius:9px; background:#fff; }
+        .check-row input { width:19px; height:19px; margin-top:1px; }
+        .dimension-meta-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; padding:12px; border-bottom:1px solid var(--slate-200); background:#f8fafc; }
+        .dimension-meta-grid textarea { min-height:78px; resize:vertical; line-height:1.55; }
+        .competency-description { margin-top:5px; color:#475569; line-height:1.55; font-size:.92rem; }
+        .result-explanation-list { display:grid; gap:10px; }
+        .result-explanation { border:1px solid var(--slate-200); border-left:5px solid var(--blue); border-radius:11px; padding:14px 15px; background:#fff; }
+        .result-explanation h4 { margin:0 0 6px; color:var(--slate-900); font-size:1.08rem; }
+        .result-explanation p { margin:0; color:#475569; line-height:1.7; }
+        .result-mode-note { padding:11px 13px; border-radius:9px; background:#fff; border:1px dashed var(--slate-300); color:var(--slate-500); line-height:1.55; }
+        .result-capture-header { text-align:center; margin-bottom:8px; }
+        .result-capture-header .assessment-name { color:var(--slate-500); font-weight:800; margin-top:2px; }
+        .empty-inline { color:var(--slate-500); font-weight:700; line-height:1.6; }
+        @media (max-width: 680px) {
+            .dimension-meta-grid { grid-template-columns:1fr; }
+            .settings-field.full { grid-column:auto; }
+        }
+
     </style>
 </head>
 <body>
@@ -295,26 +320,35 @@
         <div class="modal-box detail-modal">
             <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
                 <div>
-                    <h3 style="font-size:1.45rem;">{{ selectedResponse.name }} 的個人結果</h3>
+                    <h3 style="font-size:1.45rem;">{{ selectedResponse.name }} 的{{ assessmentSettings.resultTitle || '自評結果' }}</h3>
                     <div style="color:#64748b;">{{ formatDate(selectedResponse.submittedAt) }}</div>
                 </div>
                 <button class="btn btn-outline" @click="selectedResponse=null">關閉</button>
             </div>
-            <div class="result-note">這裡著重同一位學員各項職能與行為的相對高低，不代表與其他人比較，也不是絕對能力判定。</div>
+            <div class="result-note">{{ assessmentSettings.resultNote }}</div>
             <div class="insight-grid">
-                <div class="insight-card high">
-                    <div class="insight-label">相對較高的職能</div>
-                    <div class="insight-name">{{ responseHighestCompetencies(selectedResponse).map(x=>x.name).join('、') || '—' }}</div>
+                <div class="insight-card" :class="primaryCardClass">
+                    <div class="insight-label">{{ highDimensionLabel }}</div>
+                    <div class="insight-name">{{ responseHighestCompetencies(selectedResponse).map(x=>x.name).join('、') || '差異不明顯' }}</div>
                     <div class="insight-score" v-if="responseHighestCompetencies(selectedResponse).length">{{ responseHighestCompetencies(selectedResponse)[0].score.toFixed(2) }} / {{ maxScale }}</div>
                 </div>
-                <div class="insight-card low">
-                    <div class="insight-label">相對較低的職能</div>
-                    <div class="insight-name">{{ responseLowestCompetencies(selectedResponse).map(x=>x.name).join('、') || '—' }}</div>
+                <div class="insight-card" :class="secondaryCardClass">
+                    <div class="insight-label">{{ lowDimensionLabel }}</div>
+                    <div class="insight-name">{{ responseLowestCompetencies(selectedResponse).map(x=>x.name).join('、') || '差異不明顯' }}</div>
                     <div class="insight-score" v-if="responseLowestCompetencies(selectedResponse).length">{{ responseLowestCompetencies(selectedResponse)[0].score.toFixed(2) }} / {{ maxScale }}</div>
                 </div>
             </div>
+            <div class="result-section" v-if="responsePrimaryExplanations(selectedResponse).length">
+                <h3>{{ assessmentSettings.resultExplanationTitle }}</h3>
+                <div class="result-explanation-list">
+                    <div v-for="entry in responsePrimaryExplanations(selectedResponse)" :key="'detail_explain_'+entry.id" class="result-explanation">
+                        <h4>{{ entry.name }}</h4>
+                        <p>{{ entry.text }}</p>
+                    </div>
+                </div>
+            </div>
             <div class="result-section">
-                <h3>職能相對排序</h3>
+                <h3>{{ assessmentSettings.rankingTitle }}</h3>
                 <div class="rank-list">
                     <div v-for="(entry,index) in responseCompetencyRanking(selectedResponse)" :key="'detail_rank_'+entry.id" class="rank-row">
                         <div class="rank-number">{{ index+1 }}</div>
@@ -327,10 +361,10 @@
                 </div>
             </div>
             <div class="result-section">
-                <h3>行為相對高低</h3>
-                <div class="behavior-columns">
+                <h3>{{ assessmentSettings.itemComparisonTitle }}</h3>
+                <div v-if="responseItemHasVariation(selectedResponse)" class="behavior-columns">
                     <div class="behavior-panel">
-                        <h4>相對較高的行為</h4>
+                        <h4>{{ highItemLabel }}</h4>
                         <div class="behavior-list">
                             <div v-for="entry in responseTopBehaviors(selectedResponse)" :key="'detail_high_'+entry.id" class="behavior-item">
                                 <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
@@ -339,7 +373,7 @@
                         </div>
                     </div>
                     <div class="behavior-panel">
-                        <h4>相對較低、可優先留意的行為</h4>
+                        <h4>{{ lowItemLabel }}</h4>
                         <div class="behavior-list">
                             <div v-for="entry in responseBottomBehaviors(selectedResponse)" :key="'detail_low_'+entry.id" class="behavior-item">
                                 <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
@@ -348,6 +382,7 @@
                         </div>
                     </div>
                 </div>
+                <div v-else class="relative-empty">各題分數相同，目前沒有明顯的相對高低差異。</div>
             </div>
             <div class="result-section">
                 <h3>完整作答明細</h3>
@@ -365,9 +400,9 @@
     <!-- 後台登入 -->
     <div v-if="currentView==='login'" class="login-container">
         <div class="card login-box">
-            <div style="font-size:3rem;margin-bottom:10px;">📊</div>
-            <h1>職能自評管理後台</h1>
-            <p>建立活動、取得學員連結，並即時查看填答結果。</p>
+            <div style="font-size:3rem;margin-bottom:10px;">🧭</div>
+            <h1>全面性自評管理後台</h1>
+            <p>可建立不同類型的自評活動，自訂構面、題目、量表與結果文字。</p>
             <input type="password" class="field" v-model="loginPassword" @keydown.enter="login" placeholder="請輸入管理密碼">
             <button class="btn btn-primary btn-block" style="padding:13px;" @click="login">登入後台</button>
         </div>
@@ -376,11 +411,11 @@
     <!-- 活動列表 -->
     <div v-else-if="currentView==='lobby'" class="admin-container">
         <div class="admin-header">
-            <h1>📊 職能自評線上填答系統</h1>
-            <p>每次課程可建立獨立活動，資料會分開儲存在 Firebase。</p>
+            <h1>🧭 全面性自評線上填答系統</h1>
+            <p>每個活動都可設定不同的構面、題目、量表與結果判讀，資料分開儲存在 Firebase。</p>
         </div>
         <div class="card create-box">
-            <input class="field" v-model="newAssessmentName" @keydown.enter="createAssessment" placeholder="輸入新活動名稱，例如：2026 新任主管班職能自評">
+            <input class="field" v-model="newAssessmentName" @keydown.enter="createAssessment" placeholder="輸入新活動名稱，例如：發展抑制因子自評">
             <button class="btn btn-success" @click="createAssessment">＋ 建立新活動</button>
         </div>
         <div class="activity-grid">
@@ -405,7 +440,7 @@
     <div v-else-if="currentView==='teacher'" class="teacher-wrapper">
         <div class="teacher-topbar">
             <div class="teacher-title">
-                <h1>{{ assessmentSettings.title || '職能自評結果' }}</h1>
+                <h1>{{ assessmentSettings.title || '自評結果' }}</h1>
                 <p>結果會隨學員完成自評即時更新。</p>
             </div>
             <div class="teacher-actions">
@@ -417,7 +452,7 @@
                 <button class="btn btn-outline" @click="copyLink(assessmentId,'student')">🔗 學員連結</button>
                 <button class="btn btn-outline" @click="exportCsv" :disabled="responseArray.length===0">💾 匯出 CSV</button>
                 <button class="btn btn-danger" @click="clearResponses" :disabled="responseArray.length===0">🗑️ 清空結果</button>
-                <button class="btn btn-primary gear-btn" @click="openSettingsModal" title="題目與計分設定">⚙️</button>
+                <button class="btn btn-primary gear-btn" @click="openSettingsModal" title="自評內容與結果設定">⚙️</button>
             </div>
         </div>
 
@@ -433,15 +468,15 @@
         </div>
 
         <div v-if="responseArray.length" class="group-insight-grid">
-            <div class="insight-card high">
-                <div class="insight-label">本次平均相對較高的職能</div>
-                <div class="insight-name">{{ groupHighestCompetencies.map(x=>x.name).join('、') }}</div>
-                <div class="insight-score">{{ groupHighestCompetencies[0]?.score.toFixed(2) }} / {{ maxScale }}</div>
+            <div class="insight-card" :class="primaryCardClass">
+                <div class="insight-label">本次整體：{{ highDimensionLabel }}</div>
+                <div class="insight-name">{{ groupHighestCompetencies.map(x=>x.name).join('、') || '差異不明顯' }}</div>
+                <div class="insight-score" v-if="groupHighestCompetencies.length">{{ groupHighestCompetencies[0]?.score.toFixed(2) }} / {{ maxScale }}</div>
             </div>
-            <div class="insight-card low">
-                <div class="insight-label">本次平均相對較低的職能</div>
-                <div class="insight-name">{{ groupLowestCompetencies.map(x=>x.name).join('、') }}</div>
-                <div class="insight-score">{{ groupLowestCompetencies[0]?.score.toFixed(2) }} / {{ maxScale }}</div>
+            <div class="insight-card" :class="secondaryCardClass">
+                <div class="insight-label">本次整體：{{ lowDimensionLabel }}</div>
+                <div class="insight-name">{{ groupLowestCompetencies.map(x=>x.name).join('、') || '差異不明顯' }}</div>
+                <div class="insight-score" v-if="groupLowestCompetencies.length">{{ groupLowestCompetencies[0]?.score.toFixed(2) }} / {{ maxScale }}</div>
             </div>
         </div>
 
@@ -452,7 +487,7 @@
         </div>
 
         <div v-if="teacherTab==='overview'" class="card">
-            <h2 class="section-title">職能平均分數</h2>
+            <h2 class="section-title">{{ dimensionLabel }}平均分數</h2>
             <div v-if="responseArray.length" class="competency-bars">
                 <div v-for="(entry,index) in groupCompetencyRanking" :key="'bar_'+entry.id">
                     <div class="bar-row-head"><span>第 {{ index+1 }}：{{ entry.name }}</span><span>{{ entry.score.toFixed(2) }} / {{ maxScale }}</span></div>
@@ -491,7 +526,7 @@
                     <tr>
                         <th>姓名</th><th>完成時間</th>
                         <th v-for="comp in competencies" :key="'th_'+comp.id">{{ comp.name }}</th>
-                        <th>相對較高職能</th><th>相對較低職能</th><th>明細</th>
+                        <th>{{ highDimensionLabel }}</th><th>{{ lowDimensionLabel }}</th><th>明細</th>
                     </tr>
                     </thead>
                     <tbody>
@@ -499,8 +534,8 @@
                         <td><strong>{{ res.name }}</strong></td>
                         <td>{{ formatDate(res.submittedAt) }}</td>
                         <td v-for="comp in competencies" :key="res.id+'_'+comp.id">{{ responseCompetencyScore(res, comp.id) }}</td>
-                        <td>{{ responseHighestCompetencies(res).map(x=>x.name).join('、') }}</td>
-                        <td>{{ responseLowestCompetencies(res).map(x=>x.name).join('、') }}</td>
+                        <td>{{ responseHighestCompetencies(res).map(x=>x.name).join('、') || '差異不明顯' }}</td>
+                        <td>{{ responseLowestCompetencies(res).map(x=>x.name).join('、') || '差異不明顯' }}</td>
                         <td><button class="btn btn-outline-blue" style="padding:7px 11px;" @click="selectedResponse=res">查看</button></td>
                     </tr>
                     </tbody>
@@ -508,23 +543,121 @@
             </div>
             <div v-else class="teacher-empty">尚無學員完成自評。</div>
         </div>
+
+        <!-- 設定彈窗 -->
         <div v-if="showSettingsModal" class="modal-overlay" @click.self="showSettingsModal=false">
             <div class="modal-box settings-modal">
                 <div class="settings-head">
                     <div>
-                        <h3 style="font-size:1.5rem;margin-bottom:5px;">⚙️ 題目與計分設定</h3>
-                        <div class="settings-note">各職能分數固定採「該職能所有行為分數加總 ÷ 該職能行為題數」。新增或刪除題目後，系統會自動依最新題數重新計算。</div>
+                        <h3 style="font-size:1.5rem;margin-bottom:5px;">⚙️ 自評內容與結果設定</h3>
+                        <div class="settings-note">每個構面分數採「該構面有效作答分數平均」。可將此系統改成職能、阻力、偏好、需求、風險或其他類型的自評。</div>
                     </div>
                     <button class="btn btn-outline" @click="showSettingsModal=false">關閉</button>
                 </div>
 
                 <div class="settings-section">
-                    <h4>活動與量表設定</h4>
+                    <h4>快速套用範本</h4>
+                    <div class="preset-row">
+                        <button class="btn btn-outline-blue" @click="applyCompetencyTemplate">📊 套用「職能行為自評」21題範例</button>
+                        <button class="btn btn-outline-blue" @click="applySuppressionTemplate">🧭 套用「發展抑制因子」20題範例</button>
+                        <button class="btn btn-outline" @click="applyBlankTemplate">🧩 改成空白自評範本</button>
+                        <button class="btn btn-success" @click="exportQuestionSetExcel">📤 匯出目前題目組 Excel</button>
+                        <button class="btn btn-warning" @click="triggerQuestionSetImport">📥 匯入題目組 Excel</button>
+                        <input ref="questionSetFileInput" type="file" accept=".xlsx,.xls" style="display:none" @change="importQuestionSetExcel">
+                    </div>
+                    <div class="preset-hint" style="margin-top:9px;">Excel 題目組會包含活動文字、結果設定、量表、構面與全部題目。套用範本或匯入 Excel 都只會先更新目前編輯畫面，按下最下方「儲存自評設定」後才會正式更新活動。</div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>活動與作答說明</h4>
                     <div class="settings-grid">
                         <div class="settings-field">
                             <label>活動名稱</label>
                             <input class="field" v-model.trim="localSettings.title" placeholder="請輸入活動名稱">
                         </div>
+                        <div class="settings-field">
+                            <label>結果頁標題</label>
+                            <input class="field" v-model.trim="localSettings.resultTitle" placeholder="例如：抑制因子自評結果">
+                        </div>
+                        <div class="settings-field full">
+                            <label>學員作答說明</label>
+                            <textarea class="field" v-model.trim="localSettings.introText" placeholder="請說明學員要依據什麼期間或情境作答"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>結果用途與用語</h4>
+                    <div class="settings-grid">
+                        <div class="settings-field">
+                            <label>高分通常代表</label>
+                            <select class="field" v-model="localSettings.resultMode">
+                                <option value="positive">優勢、能力或正向程度較高</option>
+                                <option value="attention">阻力、風險或需留意程度較高</option>
+                                <option value="neutral">不預設好壞，只呈現相對高低</option>
+                            </select>
+                        </div>
+                        <div class="settings-field">
+                            <label>相近結果判定差距</label>
+                            <input type="number" min="0" max="3" step="0.05" class="field" v-model.number="localSettings.tieThreshold">
+                            <div class="settings-note">例如設為 0.25，與最高分相差 0.25 以內的構面會一併列為主要結果。</div>
+                        </div>
+                        <div class="settings-field">
+                            <label>構面名稱</label>
+                            <input class="field" v-model.trim="localSettings.dimensionLabel" placeholder="例如：構面、抑制因子、能力">
+                        </div>
+                        <div class="settings-field">
+                            <label>單題名稱</label>
+                            <input class="field" v-model.trim="localSettings.itemLabel" placeholder="例如：題目、行為、情況">
+                        </div>
+                        <div class="settings-field full">
+                            <button class="btn btn-outline-blue" @click="applyResultModeDefaults">依目前用途產生建議結果文字</button>
+                        </div>
+                        <div class="settings-field">
+                            <label>高分構面標題</label>
+                            <input class="field" v-model.trim="localSettings.highDimensionLabel">
+                        </div>
+                        <div class="settings-field">
+                            <label>低分構面標題</label>
+                            <input class="field" v-model.trim="localSettings.lowDimensionLabel">
+                        </div>
+                        <div class="settings-field">
+                            <label>高分單題標題</label>
+                            <input class="field" v-model.trim="localSettings.highItemLabel">
+                        </div>
+                        <div class="settings-field">
+                            <label>低分單題標題</label>
+                            <input class="field" v-model.trim="localSettings.lowItemLabel">
+                        </div>
+                        <div class="settings-field">
+                            <label>排序區標題</label>
+                            <input class="field" v-model.trim="localSettings.rankingTitle">
+                        </div>
+                        <div class="settings-field">
+                            <label>單題比較區標題</label>
+                            <input class="field" v-model.trim="localSettings.itemComparisonTitle">
+                        </div>
+                        <div class="settings-field">
+                            <label>主要結果說明區標題</label>
+                            <input class="field" v-model.trim="localSettings.resultExplanationTitle">
+                        </div>
+                        <div class="settings-field">
+                            <label>作答時是否顯示構面名稱</label>
+                            <label class="check-row">
+                                <input type="checkbox" v-model="localSettings.showDimensionNamesDuringAnswering">
+                                <span>顯示構面名稱與簡介；取消勾選時只顯示「第幾部分」，可降低作答者被分類名稱影響。</span>
+                            </label>
+                        </div>
+                        <div class="settings-field full">
+                            <label>結果閱讀說明</label>
+                            <textarea class="field" v-model.trim="localSettings.resultNote"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>量表設定</h4>
+                    <div class="settings-grid">
                         <div class="settings-field">
                             <label>量表分數</label>
                             <select class="field" v-model.number="localScaleCount" @change="updateScaleCount">
@@ -544,37 +677,41 @@
                 <div class="settings-section">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
                         <div>
-                            <h4 style="margin-bottom:3px;">職能與行為題目</h4>
-                            <div class="settings-note">可修改職能名稱與題目，並新增、刪除或調整題目順序。</div>
+                            <h4 style="margin-bottom:3px;">{{ localSettings.dimensionLabel || '構面' }}與題目</h4>
+                            <div class="settings-note">每個構面可設定名稱、簡介、成為主要結果時的解釋，以及所屬題目。</div>
                         </div>
-                        <button class="btn btn-success" @click="addCompetency">＋ 新增職能</button>
+                        <button class="btn btn-success" @click="addCompetency">＋ 新增{{ localSettings.dimensionLabel || '構面' }}</button>
                     </div>
 
                     <div v-for="(comp,cIndex) in localSettings.competencies" :key="comp.id" class="competency-editor">
                         <div class="competency-editor-head">
-                            <input class="field" v-model.trim="comp.name" :placeholder="'職能 '+(cIndex+1)+' 名稱'">
+                            <input class="field" v-model.trim="comp.name" :placeholder="(localSettings.dimensionLabel || '構面')+' '+(cIndex+1)+' 名稱'">
                             <button class="btn btn-outline icon-btn" @click="moveCompetency(cIndex,-1)" :disabled="cIndex===0" title="向上移">↑</button>
                             <button class="btn btn-outline icon-btn" @click="moveCompetency(cIndex,1)" :disabled="cIndex===localSettings.competencies.length-1" title="向下移">↓</button>
-                            <button class="btn btn-danger" @click="removeCompetency(cIndex)">刪除職能</button>
+                            <button class="btn btn-danger" @click="removeCompetency(cIndex)">刪除</button>
+                        </div>
+                        <div class="dimension-meta-grid">
+                            <textarea class="field" v-model.trim="comp.description" placeholder="構面簡介（選填）：簡短說明這個構面代表什麼"></textarea>
+                            <textarea class="field" v-model.trim="comp.resultText" placeholder="主要結果說明（選填）：當此構面分數最高時，要給學員看的解釋"></textarea>
                         </div>
                         <div class="item-editor-list">
                             <div v-for="(item,iIndex) in comp.items" :key="item.id" class="item-editor-row">
                                 <div class="item-order">{{ iIndex+1 }}</div>
-                                <textarea class="field" v-model.trim="item.text" placeholder="請輸入行為題目"></textarea>
+                                <textarea class="field" v-model.trim="item.text" :placeholder="'請輸入'+(localSettings.itemLabel || '題目')"></textarea>
                                 <div class="item-actions">
                                     <button class="btn btn-outline icon-btn" @click="moveItem(comp,iIndex,-1)" :disabled="iIndex===0" title="向上移">↑</button>
                                     <button class="btn btn-outline icon-btn" @click="moveItem(comp,iIndex,1)" :disabled="iIndex===comp.items.length-1" title="向下移">↓</button>
                                     <button class="btn btn-danger icon-btn" @click="removeItem(comp,iIndex)" title="刪除題目">✕</button>
                                 </div>
                             </div>
-                            <button class="btn btn-outline-blue btn-block" @click="addItem(comp)">＋ 新增行為題目</button>
+                            <button class="btn btn-outline-blue btn-block" @click="addItem(comp)">＋ 新增{{ localSettings.itemLabel || '題目' }}</button>
                         </div>
                     </div>
                 </div>
 
                 <div class="modal-actions" style="position:sticky;bottom:-28px;background:#fff;padding:14px 0 4px;border-top:1px solid var(--slate-200);">
                     <button class="btn btn-secondary" @click="showSettingsModal=false">取消</button>
-                    <button class="btn btn-primary" @click="saveSettings">💾 儲存題目與計分設定</button>
+                    <button class="btn btn-primary" @click="saveSettings">💾 儲存自評設定</button>
                 </div>
             </div>
         </div>
@@ -591,25 +728,38 @@
         <template v-else-if="studentStage==='submitted'">
             <div class="card submitted-box">
                 <div ref="studentResultCapture" class="student-result-capture">
-                    <div class="submitted-icon">🧭</div>
-                    <h2>{{ studentForm.name }} 的自評結果</h2>
-                    <div class="result-note">請從自己各項職能與行為的相對高低來閱讀結果。這不是與別人比較，也不是用單一高低分判定能力好壞。</div>
+                    <div class="result-capture-header">
+                        <div class="submitted-icon">🧭</div>
+                        <h2>{{ studentForm.name }} 的{{ assessmentSettings.resultTitle || '自評結果' }}</h2>
+                        <div class="assessment-name">{{ assessmentSettings.title }}</div>
+                    </div>
+                    <div class="result-note">{{ assessmentSettings.resultNote }}</div>
 
                     <div class="insight-grid">
-                        <div class="insight-card high">
-                            <div class="insight-label">目前相對較高的職能</div>
-                            <div class="insight-name">{{ studentHighestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
+                        <div class="insight-card" :class="primaryCardClass">
+                            <div class="insight-label">{{ highDimensionLabel }}</div>
+                            <div class="insight-name">{{ studentHighestCompetencies.map(x=>x.name).join('、') || '差異不明顯' }}</div>
                             <div class="insight-score" v-if="studentHighestCompetencies.length">{{ studentHighestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
                         </div>
-                        <div class="insight-card low">
-                            <div class="insight-label">目前相對較低的職能</div>
-                            <div class="insight-name">{{ studentLowestCompetencies.map(x=>x.name).join('、') || '—' }}</div>
+                        <div class="insight-card" :class="secondaryCardClass">
+                            <div class="insight-label">{{ lowDimensionLabel }}</div>
+                            <div class="insight-name">{{ studentLowestCompetencies.map(x=>x.name).join('、') || '差異不明顯' }}</div>
                             <div class="insight-score" v-if="studentLowestCompetencies.length">{{ studentLowestCompetencies[0].score.toFixed(2) }} / {{ maxScale }}</div>
                         </div>
                     </div>
 
+                    <div class="result-section" v-if="studentPrimaryExplanations.length">
+                        <h3>{{ assessmentSettings.resultExplanationTitle }}</h3>
+                        <div class="result-explanation-list">
+                            <div v-for="entry in studentPrimaryExplanations" :key="'stu_explain_'+entry.id" class="result-explanation">
+                                <h4>{{ entry.name }}</h4>
+                                <p>{{ entry.text }}</p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="result-section">
-                        <h3>職能相對排序</h3>
+                        <h3>{{ assessmentSettings.rankingTitle }}</h3>
                         <div class="rank-list">
                             <div v-for="(entry,index) in studentCompetencyRanking" :key="'stu_rank_'+entry.id" class="rank-row">
                                 <div class="rank-number">{{ index+1 }}</div>
@@ -623,10 +773,10 @@
                     </div>
 
                     <div class="result-section">
-                        <h3>行為相對高低</h3>
+                        <h3>{{ assessmentSettings.itemComparisonTitle }}</h3>
                         <div v-if="studentBehaviorHasVariation" class="behavior-columns">
                             <div class="behavior-panel">
-                                <h4>相對較高的行為</h4>
+                                <h4>{{ highItemLabel }}</h4>
                                 <div class="behavior-list">
                                     <div v-for="entry in studentTopBehaviors" :key="'stu_high_'+entry.id" class="behavior-item">
                                         <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
@@ -635,7 +785,7 @@
                                 </div>
                             </div>
                             <div class="behavior-panel">
-                                <h4>相對較低、可優先留意的行為</h4>
+                                <h4>{{ lowItemLabel }}</h4>
                                 <div class="behavior-list">
                                     <div v-for="entry in studentBottomBehaviors" :key="'stu_low_'+entry.id" class="behavior-item">
                                         <div><div class="behavior-text">{{ entry.text }}</div><span class="comp-chip">{{ entry.competencyName }}</span></div>
@@ -659,8 +809,8 @@
 
         <template v-else>
             <div class="card student-hero">
-                <h1>{{ assessmentSettings.title || '職能自評' }}</h1>
-                <p>請依您平時實際展現的行為頻率作答。每題均需選擇 1～{{ maxScale }} 分，完成後即可觀看自己的自評結果。</p>
+                <h1>{{ assessmentSettings.title || '線上自評' }}</h1>
+                <p>{{ assessmentSettings.introText }}</p>
                 <div class="identity-grid">
                     <div>
                         <label>姓名 <span class="required">＊</span></label>
@@ -670,7 +820,7 @@
             </div>
 
             <div class="card scale-card">
-                <h2>評鑑標準（{{ maxScale }} 分量表）</h2>
+                <h2>作答標準（{{ maxScale }} 分量表）</h2>
                 <div class="scale-grid" :style="{gridTemplateColumns:'repeat('+scales.length+',minmax(120px,1fr))'}">
                     <div v-for="scale in scales" :key="scale.value" class="scale-item">
                         <div class="scale-number">{{ scale.value }}</div>
@@ -688,16 +838,20 @@
                 <div class="progress-track"><div class="progress-fill" :style="{width:progressPercent+'%'}"></div></div>
             </div>
 
-            <section v-for="comp in competencies" :key="comp.id" class="competency-section">
+            <section v-for="(comp,cIndex) in competencies" :key="comp.id" class="competency-section">
                 <div class="competency-header">
-                    <h2>{{ comp.name }}</h2>
+                    <div>
+                        <h2>{{ assessmentSettings.showDimensionNamesDuringAnswering ? comp.name : '第 '+(cIndex+1)+' 部分' }}</h2>
+                        <div v-if="assessmentSettings.showDimensionNamesDuringAnswering && comp.description" class="competency-description">{{ comp.description }}</div>
+                    </div>
                     <span class="competency-count">{{ answeredInCompetency(comp) }} / {{ comp.items.length }}</span>
                 </div>
                 <div v-for="(item,index) in comp.items" :key="item.id" class="question-card">
-                    <div class="question-text">{{ index+1 }}. {{ item.text }}</div>
+                    <div class="question-text">{{ questionNumber(cIndex,index) }}. {{ item.text }}</div>
                     <div class="rating-row" :style="{gridTemplateColumns:'repeat('+scales.length+',1fr)'}">
                         <button v-for="scale in scales" :key="scale.value" type="button" class="rating-btn"
                                 :class="{selected:Number(studentForm.answers[item.id])===scale.value}"
+                                :title="scale.name + (scale.desc ? '：'+scale.desc : '')"
                                 @click="setAnswer(item.id, scale.value)">{{ scale.value }}</button>
                     </div>
                 </div>
@@ -731,9 +885,31 @@ const firebaseConfig = {
 if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-const DEFAULT_COMPETENCIES = [
+const cloneData = value => JSON.parse(JSON.stringify(value));
+
+const GENERAL_DIMENSIONS = [
     {
-        id: 'planning', name: '計劃與組織', items: [
+        id: 'dimension_1', name: '構面一', description: '', resultText: '', items: [
+            { id: 'item_1', text: '請在後台設定第一題。' }
+        ]
+    }
+];
+
+const GENERAL_SCALES = [
+    { value: 1, name: '非常不符合', desc: '與我的實際情況非常不符合' },
+    { value: 2, name: '不太符合', desc: '與我的實際情況較不符合' },
+    { value: 3, name: '部分符合', desc: '有些情況符合、有些不符合' },
+    { value: 4, name: '大致符合', desc: '大多數時候符合我的實際情況' },
+    { value: 5, name: '非常符合', desc: '與我的實際情況非常符合' }
+];
+
+const COMPETENCY_DIMENSIONS = [
+    {
+        id: 'planning',
+        name: '計劃與組織',
+        description: '安排工作優先順序、拆解任務、配置資源並掌握時程。',
+        resultText: '',
+        items: [
             { id: 'p1', text: '我能夠精準分辨較重要及次重要的任務。' },
             { id: 'p2', text: '我會依據任務的重要程度調整處理的優先順序。' },
             { id: 'p3', text: '我工作時會將任務細分為工作細項，列出所需的設備、物料及人力，並與內部及外部夥伴協調。' },
@@ -744,7 +920,11 @@ const DEFAULT_COMPETENCIES = [
         ]
     },
     {
-        id: 'decision', name: '決策能力', items: [
+        id: 'decision',
+        name: '決策能力',
+        description: '辨識問題與機會、蒐集分析資訊、發展方案並適時做出決定。',
+        resultText: '',
+        items: [
             { id: 'd1', text: '我會主動找出問題或機會，決定是否有需要採取行動。' },
             { id: 'd2', text: '遇到問題時我會收集資料以更瞭解所面對的議題或機會。' },
             { id: 'd3', text: '做決定前，我會整合不同來源的資料，從中發現趨勢性、關聯性及因果關係。' },
@@ -756,7 +936,11 @@ const DEFAULT_COMPETENCIES = [
         ]
     },
     {
-        id: 'expression', name: '表達', items: [
+        id: 'expression',
+        name: '表達',
+        description: '有條理地傳達訊息、依聽眾調整方式並確認彼此理解。',
+        resultText: '',
+        items: [
             { id: 'e1', text: '我能有條理組織性的溝通，具體闡明目標及重要性、強調重點、或有邏輯架構的表達。' },
             { id: 'e2', text: '我能維持聽眾的注意力，藉由例如類比、舉例、肢體語言、聲音變化等技巧，使聽眾專注。' },
             { id: 'e3', text: '我會隨著聽眾調整，根據聽眾的經驗、背景與期望，使用對其有意義的術語、範例、類比。' },
@@ -767,7 +951,7 @@ const DEFAULT_COMPETENCIES = [
     }
 ];
 
-const DEFAULT_SCALES = [
+const COMPETENCY_SCALES = [
     { value: 1, name: '完全沒有展現', desc: '完全沒有展現題目中所描述的行為（頻率 0%）' },
     { value: 2, name: '很少展現', desc: '少有這項行為，且仍有很大的改進空間（頻率 25%）' },
     { value: 3, name: '普通', desc: '能展現題目中所描述的行為（頻率 50%）' },
@@ -775,7 +959,172 @@ const DEFAULT_SCALES = [
     { value: 5, name: '總是展現', desc: '總是且稱職展現題目中所描述的行為（頻率 100%）' }
 ];
 
-const cloneData = value => JSON.parse(JSON.stringify(value));
+const SUPPRESSION_DIMENSIONS = [
+    {
+        id: 'context_interference',
+        name: '情境干擾',
+        description: '發展行動容易被外界任務、訊息或環境變動中斷。',
+        resultText: '外在事情一多，原本安排的發展行動就容易被擱置；真正的阻力不一定是沒有意願，而是中斷後缺少重新接回進度的空間與方法。',
+        items: [
+            { id: 'si01', text: '事情一忙，我原本安排的發展行動就容易被擱置。' },
+            { id: 'si02', text: '臨時任務、訊息或他人的需求一來，我就很難再回到原本的進度。' },
+            { id: 'si03', text: '原本安排的時間被占用後，我通常不會再找時間補回來。' },
+            { id: 'si04', text: '場地、工具或時間不夠理想時，我就容易決定先不做。' }
+        ]
+    },
+    {
+        id: 'motivation_loss',
+        name: '動機耗損',
+        description: '開始時有意願，但動力會隨著時間、重複或看不到成果而下降。',
+        resultText: '你可能不是不想進步，而是行動的回饋太慢、重複感太高，讓原本的意願逐漸消耗。要持續推進，通常需要更短的回饋週期與看得見的小進展。',
+        items: [
+            { id: 'si05', text: '一開始很有興趣，但做過幾次後，動力就會明顯下降。' },
+            { id: 'si06', text: '短期看不到進步時，我會覺得繼續做下去好像沒有什麼用。' },
+            { id: 'si07', text: '即使知道這件事對自己有幫助，我仍常常提不起勁開始。' },
+            { id: 'si08', text: '需要反覆練習或持續累積時，我很容易覺得厭煩而中斷。' }
+        ]
+    },
+    {
+        id: 'emotional_reaction',
+        name: '情緒反作用',
+        description: '挫折、失敗、壓力或回饋帶來的情緒，會讓行動停下來。',
+        resultText: '卡住你的可能不只是事情本身，而是做不好、被指出問題或進展緩慢時產生的情緒。情緒一上來，容易把一次挫折延伸成對整件事的逃避。',
+        items: [
+            { id: 'si09', text: '一次做不好，就會讓我不太想再碰這件事。' },
+            { id: 'si10', text: '發現自己進步得比預期慢時，我容易失去信心。' },
+            { id: 'si11', text: '被指出問題或收到不理想的回饋後，我會暫時避開這件事。' },
+            { id: 'si12', text: '壓力大或心情不好時，我常把原本的發展行動全部停下來。' }
+        ]
+    },
+    {
+        id: 'cognitive_rationalization',
+        name: '認知合理化',
+        description: '用看似合理的理由延後行動，讓自己暫時不用面對困難。',
+        resultText: '你可能很會替延後找到合理原因，例如等有空、等狀態好、先做更重要的事。這些理由未必是假的，但若反覆出現，就會讓發展行動一直停留在「之後再做」。',
+        items: [
+            { id: 'si13', text: '我常告訴自己：「等有空一點、狀態好一點再開始。」' },
+            { id: 'si14', text: '做了一點之後，我容易覺得「這樣已經差不多了」，因此沒有繼續。' },
+            { id: 'si15', text: '進展不順時，我容易認為：「可能我本來就不適合做這件事。」' },
+            { id: 'si16', text: '我常用「現在有更重要的事」讓自己延後原本想做的行動。' }
+        ]
+    },
+    {
+        id: 'system_lack',
+        name: '系統缺乏',
+        description: '缺少時間安排、明確下一步、進度記錄或重新啟動的支持結構。',
+        resultText: '你可能有發展意願，但沒有把意願轉成可持續的安排。當下一步不清楚、沒有固定時間、缺少記錄或提醒時，每次都要重新決定，行動就很容易中斷。',
+        items: [
+            { id: 'si17', text: '我知道自己想改善什麼，但沒有固定安排什麼時候要做。' },
+            { id: 'si18', text: '我有想發展的方向，卻常常不知道下一步具體要做什麼。' },
+            { id: 'si19', text: '我很少記錄自己的進度，也不清楚上次中斷在什麼地方。' },
+            { id: 'si20', text: '卡住或中斷後，我沒有固定的提醒、工具或協助方式，幫助自己重新開始。' }
+        ]
+    }
+];
+
+const SUPPRESSION_SCALES = [
+    { value: 1, name: '幾乎沒有', desc: '這種情況幾乎不會發生' },
+    { value: 2, name: '偶爾發生', desc: '有時會發生，但不是主要的中斷原因' },
+    { value: 3, name: '經常發生', desc: '這種情況常會影響我的持續行動' },
+    { value: 4, name: '幾乎每次', desc: '只要遇到類似狀況，通常就會讓我停下來' }
+];
+
+function baseSettings(title = '') {
+    return {
+        title,
+        isActive: false,
+        createdAt: 0,
+        introText: '請依照自己平時的實際情況作答。每題都沒有標準答案，重點是找出自己目前較明顯的模式。',
+        resultTitle: '自評結果',
+        resultMode: 'neutral',
+        dimensionLabel: '構面',
+        itemLabel: '題目',
+        highDimensionLabel: '相對較高的構面',
+        lowDimensionLabel: '相對較低的構面',
+        highItemLabel: '相對較高的題目',
+        lowItemLabel: '相對較低的題目',
+        rankingTitle: '構面相對排序',
+        itemComparisonTitle: '單題相對高低',
+        resultExplanationTitle: '主要結果說明',
+        resultNote: '請從自己各構面與題目的相對高低來閱讀結果。這不是與別人比較，也不代表絕對好壞，而是協助您看見目前較明顯的模式。',
+        showDimensionNamesDuringAnswering: true,
+        tieThreshold: 0,
+        competencies: cloneData(GENERAL_DIMENSIONS),
+        scales: cloneData(GENERAL_SCALES)
+    };
+}
+
+function competencySettings(title = '職能行為自評') {
+    return {
+        ...baseSettings(title),
+        title,
+        introText: '請依您平時實際展現的行為頻率作答。每題均需選擇 1～5 分，完成後即可觀看自己的自評結果。',
+        resultTitle: '職能行為自評結果',
+        resultMode: 'positive',
+        dimensionLabel: '職能',
+        itemLabel: '行為',
+        highDimensionLabel: '目前相對較高的職能',
+        lowDimensionLabel: '目前相對較低的職能',
+        highItemLabel: '相對較高的行為',
+        lowItemLabel: '相對較低、可優先留意的行為',
+        rankingTitle: '職能相對排序',
+        itemComparisonTitle: '行為相對高低',
+        resultExplanationTitle: '主要職能結果說明',
+        resultNote: '請從自己各項職能與行為的相對高低來閱讀結果。這不是與別人比較，也不是用單一高低分判定能力好壞。',
+        showDimensionNamesDuringAnswering: true,
+        tieThreshold: 0,
+        competencies: cloneData(COMPETENCY_DIMENSIONS),
+        scales: cloneData(COMPETENCY_SCALES)
+    };
+}
+
+function suppressionSettings(title = '發展抑制因子自評') {
+    return {
+        ...baseSettings(title),
+        title,
+        introText: '回想過去三個月，當您想培養一項能力、改善一個習慣，或持續做一件對自己有幫助的事時，以下情況多常發生？',
+        resultTitle: '抑制因子自評結果',
+        resultMode: 'attention',
+        dimensionLabel: '抑制因子',
+        itemLabel: '情況',
+        highDimensionLabel: '目前較主要的抑制因子',
+        lowDimensionLabel: '目前較少影響的因子',
+        highItemLabel: '較常出現、可優先留意的情況',
+        lowItemLabel: '較少出現的情況',
+        rankingTitle: '抑制因子相對排序',
+        itemComparisonTitle: '常見中斷情況相對高低',
+        resultExplanationTitle: '這些結果可能代表什麼',
+        resultNote: '這份結果用來辨識您在發展過程中較常出現的中斷來源。分數較高代表該情況較常影響您，不是能力好壞，也不是心理診斷。請優先觀察最高的因子，而不需要一次處理所有問題。',
+        showDimensionNamesDuringAnswering: true,
+        tieThreshold: 0.25,
+        competencies: cloneData(SUPPRESSION_DIMENSIONS),
+        scales: cloneData(SUPPRESSION_SCALES)
+    };
+}
+
+function normalizeSettings(value = {}) {
+    const source = value || {};
+    const fallback = baseSettings(source.title || '');
+    const competencies = Array.isArray(source.competencies) && source.competencies.length
+        ? cloneData(source.competencies)
+        : cloneData(fallback.competencies);
+    const scales = Array.isArray(source.scales) && source.scales.length >= 2
+        ? cloneData(source.scales)
+        : cloneData(fallback.scales);
+    competencies.forEach(comp => {
+        comp.description = comp.description || '';
+        comp.resultText = comp.resultText || '';
+        comp.items = Array.isArray(comp.items) ? comp.items : [];
+    });
+    return {
+        ...fallback,
+        ...source,
+        competencies,
+        scales: scales.map((s,index) => ({ value:index+1, name:s.name || `${index+1} 分`, desc:s.desc || '' })),
+        tieThreshold: Math.max(0, Number(source.tieThreshold ?? fallback.tieThreshold) || 0),
+        showDimensionNamesDuringAnswering: source.showDimensionNamesDuringAnswering !== false
+    };
+}
 
 createApp({
     data() {
@@ -786,17 +1135,17 @@ createApp({
             assessmentId: '',
             assessmentsList: [],
             newAssessmentName: '',
-            assessmentSettings: { title: '', isActive: false, createdAt: 0 },
+            assessmentSettings: normalizeSettings({}),
             responses: {},
             teacherTab: 'overview',
             selectedResponse: null,
             toastMsg: '',
             confirmModal: { show: false, message: '', action: null },
             renameModal: { show: false, id: '', newName: '' },
-            competencies: cloneData(DEFAULT_COMPETENCIES),
-            scales: cloneData(DEFAULT_SCALES),
+            competencies: cloneData(GENERAL_DIMENSIONS),
+            scales: cloneData(GENERAL_SCALES),
             showSettingsModal: false,
-            localSettings: { title: '', competencies: [], scales: [] },
+            localSettings: normalizeSettings({}),
             localScaleCount: 5,
             studentForm: { name: '', answers: {} },
             studentStage: 'form',
@@ -808,10 +1157,18 @@ createApp({
         };
     },
     computed: {
+        dimensionLabel() { return this.assessmentSettings.dimensionLabel || '構面'; },
+        itemLabel() { return this.assessmentSettings.itemLabel || '題目'; },
+        highDimensionLabel() { return this.assessmentSettings.highDimensionLabel || `相對較高的${this.dimensionLabel}`; },
+        lowDimensionLabel() { return this.assessmentSettings.lowDimensionLabel || `相對較低的${this.dimensionLabel}`; },
+        highItemLabel() { return this.assessmentSettings.highItemLabel || `相對較高的${this.itemLabel}`; },
+        lowItemLabel() { return this.assessmentSettings.lowItemLabel || `相對較低的${this.itemLabel}`; },
+        primaryCardClass() { return this.assessmentSettings.resultMode === 'attention' ? 'low' : 'high'; },
+        secondaryCardClass() { return this.assessmentSettings.resultMode === 'attention' ? 'high' : 'low'; },
         allItems() { return this.competencies.flatMap(c => c.items || []); },
         maxScale() { return this.scales.length ? Math.max(...this.scales.map(s => Number(s.value) || 0)) : 5; },
         totalItems() { return this.allItems.length; },
-        answeredCount() { return this.allItems.filter(item => Number(this.studentForm.answers[item.id]) >= 1 && Number(this.studentForm.answers[item.id]) <= this.maxScale).length; },
+        answeredCount() { return this.allItems.filter(item => this.isValidScore(this.studentForm.answers[item.id])).length; },
         progressPercent() { return this.totalItems ? Math.round(this.answeredCount / this.totalItems * 100) : 0; },
         responseArray() {
             return Object.keys(this.responses || {}).map(id => ({ id, ...this.responses[id] }))
@@ -825,38 +1182,21 @@ createApp({
                 originalIndex: index
             })).sort((a,b) => b.score - a.score || a.originalIndex - b.originalIndex);
         },
-        groupHighestCompetencies() {
-            if (!this.groupCompetencyRanking.length) return [];
-            const highest = this.groupCompetencyRanking[0].score;
-            return this.groupCompetencyRanking.filter(x => Math.abs(x.score - highest) < 0.0001);
-        },
-        groupLowestCompetencies() {
-            if (!this.groupCompetencyRanking.length) return [];
-            const lowest = this.groupCompetencyRanking[this.groupCompetencyRanking.length - 1].score;
-            return this.groupCompetencyRanking.filter(x => Math.abs(x.score - lowest) < 0.0001);
-        },
-        studentCompetencyRanking() {
-            return this.buildCompetencyRanking(this.studentForm.answers);
-        },
-        studentHighestCompetencies() {
-            return this.pickHighestCompetencies(this.studentCompetencyRanking);
-        },
-        studentLowestCompetencies() {
-            return this.pickLowestCompetencies(this.studentCompetencyRanking);
-        },
-        studentBehaviorRanking() {
-            return this.buildBehaviorRanking(this.studentForm.answers);
-        },
-        studentTopBehaviors() {
-            return this.studentBehaviorRanking.slice(0, 3);
-        },
+        groupHighestCompetencies() { return this.pickHighestCompetencies(this.groupCompetencyRanking); },
+        groupLowestCompetencies() { return this.pickLowestCompetencies(this.groupCompetencyRanking); },
+        studentCompetencyRanking() { return this.buildCompetencyRanking(this.studentForm.answers); },
+        studentHighestCompetencies() { return this.pickHighestCompetencies(this.studentCompetencyRanking); },
+        studentLowestCompetencies() { return this.pickLowestCompetencies(this.studentCompetencyRanking); },
+        studentBehaviorRanking() { return this.buildBehaviorRanking(this.studentForm.answers); },
+        studentTopBehaviors() { return this.studentBehaviorRanking.slice(0, 3); },
         studentBottomBehaviors() {
             return [...this.studentBehaviorRanking].sort((a,b) => a.score - b.score || a.originalIndex - b.originalIndex).slice(0, 3);
         },
         studentBehaviorHasVariation() {
             if (!this.studentBehaviorRanking.length) return false;
             return this.studentBehaviorRanking[0].score !== this.studentBehaviorRanking[this.studentBehaviorRanking.length - 1].score;
-        }
+        },
+        studentPrimaryExplanations() { return this.buildPrimaryExplanations(this.studentHighestCompetencies); }
     },
     watch: {
         studentForm: {
@@ -888,9 +1228,7 @@ createApp({
             this.toastMsg = msg;
             setTimeout(() => { if (this.toastMsg === msg) this.toastMsg = ''; }, 3000);
         },
-        askConfirm(message, action) {
-            this.confirmModal = { show: true, message, action };
-        },
+        askConfirm(message, action) { this.confirmModal = { show: true, message, action }; },
         executeConfirm() {
             const action = this.confirmModal.action;
             this.confirmModal = { show: false, message: '', action: null };
@@ -917,18 +1255,18 @@ createApp({
             const name = this.newAssessmentName.trim();
             if (!name) { this.showMessage('請先輸入活動名稱'); return; }
             const ref = db.ref('selfAssessmentsList').push();
-            const data = { name, createdAt: Date.now() };
+            const createdAt = Date.now();
+            const settings = suppressionSettings(name);
+            settings.createdAt = createdAt;
             Promise.all([
-                ref.set(data),
-                db.ref(`selfAssessments/${ref.key}/settings`).set({ title: name, createdAt: data.createdAt, isActive: false, competencies: cloneData(DEFAULT_COMPETENCIES), scales: cloneData(DEFAULT_SCALES) })
+                ref.set({ name, createdAt }),
+                db.ref(`selfAssessments/${ref.key}/settings`).set(settings)
             ]).then(() => {
                 this.newAssessmentName = '';
-                this.showMessage('✅ 活動建立成功');
+                this.showMessage('✅ 活動建立成功，已帶入「發展抑制因子」20題範例');
             }).catch(err => this.showMessage('❌ 建立失敗：' + err.message));
         },
-        openRename(activity) {
-            this.renameModal = { show: true, id: activity.id, newName: activity.name };
-        },
+        openRename(activity) { this.renameModal = { show: true, id: activity.id, newName: activity.name }; },
         executeRename() {
             const name = this.renameModal.newName.trim();
             if (!name) { this.showMessage('活動名稱不可空白'); return; }
@@ -942,23 +1280,16 @@ createApp({
             }).catch(err => this.showMessage('❌ 重新命名失敗：' + err.message));
         },
         duplicateAssessment(activity) {
-            this.askConfirm(`確定要複製活動「${activity.name}」嗎？題目與計分設定會一併複製，但不會帶入原填答結果。`, () => {
+            this.askConfirm(`確定要複製活動「${activity.name}」嗎？所有自評設定會一併複製，但不會帶入原填答結果。`, () => {
                 this.isLoading = true;
                 db.ref(`selfAssessments/${activity.id}/settings`).once('value').then(snap => {
-                    const original = snap.val() || {};
+                    const original = normalizeSettings(snap.val() || {});
                     const name = activity.name + '（複製）';
                     const ref = db.ref('selfAssessmentsList').push();
                     const createdAt = Date.now();
                     return Promise.all([
                         ref.set({ name, createdAt }),
-                        db.ref(`selfAssessments/${ref.key}/settings`).set({
-                            ...original,
-                            title: name,
-                            createdAt,
-                            isActive: false,
-                            competencies: cloneData(original.competencies || DEFAULT_COMPETENCIES),
-                            scales: cloneData(original.scales || DEFAULT_SCALES)
-                        })
+                        db.ref(`selfAssessments/${ref.key}/settings`).set({ ...original, title:name, createdAt, isActive:false })
                     ]);
                 }).then(() => this.showMessage('✅ 活動已複製'))
                   .catch(err => this.showMessage('❌ 複製失敗：' + err.message))
@@ -1000,12 +1331,11 @@ createApp({
                     this.showMessage('找不到此活動，或活動已被刪除');
                     return;
                 }
-                const competencies = Array.isArray(val.competencies) && val.competencies.length ? cloneData(val.competencies) : cloneData(DEFAULT_COMPETENCIES);
-                const scales = Array.isArray(val.scales) && val.scales.length >= 2 ? cloneData(val.scales) : cloneData(DEFAULT_SCALES);
-                this.assessmentSettings = { title: '', isActive: false, ...val, competencies, scales };
-                this.competencies = competencies;
-                this.scales = scales.map((s, index) => ({ value: index + 1, name: s.name || `${index+1} 分`, desc: s.desc || '' }));
-                document.title = `${this.assessmentSettings.title}｜職能自評`; 
+                const normalized = normalizeSettings(val);
+                this.assessmentSettings = normalized;
+                this.competencies = cloneData(normalized.competencies);
+                this.scales = cloneData(normalized.scales);
+                document.title = `${normalized.title || '線上自評'}｜全面性自評系統`;
                 if (this.currentView === 'student' && !this.studentStateRestored) this.restoreStudentState();
                 this.isLoading = false;
             }, err => {
@@ -1018,31 +1348,353 @@ createApp({
                 });
             }
         },
-        makeId(prefix) {
-            return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`;
-        },
+        makeId(prefix) { return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,8)}`; },
         openSettingsModal() {
-            this.localSettings = {
-                title: this.assessmentSettings.title || '',
-                competencies: cloneData(this.competencies),
-                scales: cloneData(this.scales)
-            };
+            this.localSettings = normalizeSettings(this.assessmentSettings);
             this.localScaleCount = this.localSettings.scales.length || 5;
             this.showSettingsModal = true;
+        },
+        applyCompetencyTemplate() {
+            const title = (this.localSettings.title || this.assessmentSettings.title || '職能行為自評').trim();
+            const active = this.assessmentSettings.isActive;
+            const createdAt = this.assessmentSettings.createdAt;
+            this.localSettings = { ...competencySettings(title), isActive:active, createdAt };
+            this.localScaleCount = this.localSettings.scales.length;
+            this.showMessage('📊 已帶入職能行為自評21題範例，尚未儲存');
+        },
+        applySuppressionTemplate() {
+            const title = (this.localSettings.title || this.assessmentSettings.title || '發展抑制因子自評').trim();
+            const active = this.assessmentSettings.isActive;
+            const createdAt = this.assessmentSettings.createdAt;
+            this.localSettings = { ...suppressionSettings(title), isActive:active, createdAt };
+            this.localScaleCount = this.localSettings.scales.length;
+            this.showMessage('🧭 已帶入抑制因子20題範例，尚未儲存');
+        },
+        applyBlankTemplate() {
+            const title = (this.localSettings.title || this.assessmentSettings.title || '新的自評活動').trim();
+            const active = this.assessmentSettings.isActive;
+            const createdAt = this.assessmentSettings.createdAt;
+            this.localSettings = { ...baseSettings(title), isActive:active, createdAt };
+            this.localScaleCount = this.localSettings.scales.length;
+            this.showMessage('🧩 已改成空白範本，尚未儲存');
+        },
+        exportQuestionSetExcel() {
+            if (typeof XLSX === 'undefined') {
+                this.showMessage('❌ Excel 元件尚未載入，請確認網路連線後重新開啟');
+                return;
+            }
+            try {
+                const settings = normalizeSettings(this.localSettings || this.assessmentSettings);
+                const modeText = {
+                    positive: '優勢、能力或正向程度較高',
+                    attention: '阻力、風險或需留意程度較高',
+                    neutral: '不預設好壞，只呈現相對高低'
+                }[settings.resultMode] || '不預設好壞，只呈現相對高低';
+
+                const instructionRows = [
+                    ['全面性自評系統－Excel 題目組使用說明'],
+                    [''],
+                    ['1. 可直接修改「基本設定」、「量表設定」與「題目設定」工作表。'],
+                    ['2. 工作表名稱及第一列欄位名稱請勿刪除或更改，以免系統無法辨識。'],
+                    ['3. 「題目設定」中，同一構面的名稱、簡介及主要結果說明可在每一題重複填寫；匯入時會自動合併。'],
+                    ['4. 構面ID與題目ID可保留原值；新增資料時可以留白，系統匯入後會自動產生。'],
+                    ['5. 完成後回到講師後台的「自評內容與結果設定」，點選「匯入題目組 Excel」。'],
+                    ['6. 匯入只會先更新設定畫面，仍需按下「儲存自評設定」才會正式套用。'],
+                    [''],
+                    ['檔案格式版本', '1.0']
+                ];
+
+                const basicRows = [
+                    ['欄位', '值'],
+                    ['檔案類型', '全面性自評系統題目組'],
+                    ['範本格式版本', '1.0'],
+                    ['活動名稱', settings.title || '自評活動'],
+                    ['結果頁標題', settings.resultTitle || '自評結果'],
+                    ['學員作答說明', settings.introText || ''],
+                    ['高分通常代表', modeText],
+                    ['相近結果判定差距', Number(settings.tieThreshold) || 0],
+                    ['構面名稱', settings.dimensionLabel || '構面'],
+                    ['單題名稱', settings.itemLabel || '題目'],
+                    ['高分構面標題', settings.highDimensionLabel || ''],
+                    ['低分構面標題', settings.lowDimensionLabel || ''],
+                    ['高分單題標題', settings.highItemLabel || ''],
+                    ['低分單題標題', settings.lowItemLabel || ''],
+                    ['排序區標題', settings.rankingTitle || ''],
+                    ['單題比較區標題', settings.itemComparisonTitle || ''],
+                    ['主要結果說明區標題', settings.resultExplanationTitle || ''],
+                    ['作答時顯示構面名稱', settings.showDimensionNamesDuringAnswering === false ? '否' : '是'],
+                    ['結果閱讀說明', settings.resultNote || '']
+                ];
+
+                const scaleRows = [
+                    ['分數', '名稱', '說明'],
+                    ...settings.scales.map(scale => [
+                        Number(scale.value),
+                        scale.name || `${scale.value} 分`,
+                        scale.desc || ''
+                    ])
+                ];
+
+                const questionRows = [[
+                    '構面順序', '構面ID', '構面名稱', '構面簡介', '主要結果說明',
+                    '題目順序', '題目ID', '題目內容'
+                ]];
+                settings.competencies.forEach((comp, compIndex) => {
+                    (comp.items || []).forEach((item, itemIndex) => {
+                        questionRows.push([
+                            compIndex + 1,
+                            comp.id || '',
+                            comp.name || '',
+                            comp.description || '',
+                            comp.resultText || '',
+                            itemIndex + 1,
+                            item.id || '',
+                            item.text || ''
+                        ]);
+                    });
+                });
+
+                const workbook = XLSX.utils.book_new();
+                const instructionSheet = XLSX.utils.aoa_to_sheet(instructionRows);
+                const basicSheet = XLSX.utils.aoa_to_sheet(basicRows);
+                const scaleSheet = XLSX.utils.aoa_to_sheet(scaleRows);
+                const questionSheet = XLSX.utils.aoa_to_sheet(questionRows);
+
+                instructionSheet['!cols'] = [{ wch: 78 }, { wch: 18 }];
+                basicSheet['!cols'] = [{ wch: 26 }, { wch: 90 }];
+                scaleSheet['!cols'] = [{ wch: 10 }, { wch: 24 }, { wch: 60 }];
+                questionSheet['!cols'] = [
+                    { wch: 12 }, { wch: 24 }, { wch: 22 }, { wch: 48 },
+                    { wch: 72 }, { wch: 12 }, { wch: 24 }, { wch: 88 }
+                ];
+
+                XLSX.utils.book_append_sheet(workbook, instructionSheet, '使用說明');
+                XLSX.utils.book_append_sheet(workbook, basicSheet, '基本設定');
+                XLSX.utils.book_append_sheet(workbook, scaleSheet, '量表設定');
+                XLSX.utils.book_append_sheet(workbook, questionSheet, '題目設定');
+
+                const safeTitle = String(settings.title || '自評題目組')
+                    .replace(/[\\/:*?"<>|]/g, '_')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .slice(0, 60) || '自評題目組';
+                XLSX.writeFile(workbook, `${safeTitle}_題目組.xlsx`, {
+                    bookType: 'xlsx',
+                    compression: true
+                });
+                this.showMessage('✅ 已匯出目前題目組 Excel');
+            } catch (err) {
+                this.showMessage('❌ 匯出失敗：' + (err?.message || err));
+            }
+        },
+        triggerQuestionSetImport() {
+            if (typeof XLSX === 'undefined') {
+                this.showMessage('❌ Excel 元件尚未載入，請確認網路連線後重新開啟');
+                return;
+            }
+            const input = this.$refs.questionSetFileInput;
+            if (input) input.click();
+        },
+        async importQuestionSetExcel(event) {
+            const input = event.target;
+            const file = input.files && input.files[0];
+            if (!file) return;
+            try {
+                if (typeof XLSX === 'undefined') throw new Error('Excel 元件尚未載入');
+                const data = await file.arrayBuffer();
+                const workbook = XLSX.read(data, { type:'array' });
+                const basicSheet = workbook.Sheets['基本設定'];
+                const scaleSheet = workbook.Sheets['量表設定'];
+                const questionSheet = workbook.Sheets['題目設定'];
+                if (!scaleSheet || !questionSheet) {
+                    throw new Error('缺少「量表設定」或「題目設定」工作表，請使用本系統匯出的題目組格式');
+                }
+
+                const readValue = (row, names) => {
+                    for (const name of names) {
+                        if (Object.prototype.hasOwnProperty.call(row, name)) return row[name];
+                    }
+                    return '';
+                };
+                const asText = value => String(value ?? '').trim();
+                const parseBoolean = (value, fallback) => {
+                    const text = asText(value).toLowerCase();
+                    if (['是','true','1','yes','y'].includes(text)) return true;
+                    if (['否','false','0','no','n'].includes(text)) return false;
+                    return fallback;
+                };
+                const parseResultMode = (value, fallback) => {
+                    const text = asText(value);
+                    if (text === 'positive' || text.includes('優勢') || text.includes('正向')) return 'positive';
+                    if (text === 'attention' || text.includes('阻力') || text.includes('風險') || text.includes('留意')) return 'attention';
+                    if (text === 'neutral' || text.includes('不預設')) return 'neutral';
+                    return fallback;
+                };
+
+                const current = normalizeSettings(this.localSettings || this.assessmentSettings);
+                const basicMap = {};
+                if (basicSheet) {
+                    XLSX.utils.sheet_to_json(basicSheet, { defval:'' }).forEach(row => {
+                        const key = asText(readValue(row, ['欄位','設定欄位']));
+                        if (key) basicMap[key] = readValue(row, ['值','設定值']);
+                    });
+                }
+                const hasBasic = key => Object.prototype.hasOwnProperty.call(basicMap, key);
+                const getBasic = (key, fallback) => hasBasic(key) ? basicMap[key] : fallback;
+
+                const scaleData = XLSX.utils.sheet_to_json(scaleSheet, { defval:'' })
+                    .map((row, index) => ({
+                        value: Number(readValue(row, ['分數','量表分數'])) || index + 1,
+                        name: asText(readValue(row, ['名稱','量表名稱'])),
+                        desc: asText(readValue(row, ['說明','量表說明']))
+                    }))
+                    .filter(row => row.name || row.desc || Number.isFinite(row.value))
+                    .sort((a,b) => a.value - b.value);
+
+                if (scaleData.length < 2 || scaleData.length > 10) {
+                    throw new Error('量表設定必須包含 2～10 個分數層級');
+                }
+                const scales = scaleData.map((scale, index) => ({
+                    value: index + 1,
+                    name: scale.name || `${index + 1} 分`,
+                    desc: scale.desc || ''
+                }));
+
+                const rawQuestionRows = XLSX.utils.sheet_to_json(questionSheet, { defval:'' })
+                    .map((row, index) => ({
+                        compOrder: Number(readValue(row, ['構面順序','分類順序'])) || 999999,
+                        compId: asText(readValue(row, ['構面ID','分類ID'])),
+                        compName: asText(readValue(row, ['構面名稱','分類名稱'])),
+                        description: asText(readValue(row, ['構面簡介','分類簡介'])),
+                        resultText: asText(readValue(row, ['主要結果說明','結果說明'])),
+                        itemOrder: Number(readValue(row, ['題目順序','項目順序'])) || index + 1,
+                        itemId: asText(readValue(row, ['題目ID','項目ID'])),
+                        itemText: asText(readValue(row, ['題目內容','題目','項目內容']))
+                    }))
+                    .filter(row => row.compName || row.itemText)
+                    .sort((a,b) => a.compOrder - b.compOrder || a.itemOrder - b.itemOrder);
+
+                if (!rawQuestionRows.length) throw new Error('「題目設定」工作表沒有可匯入的題目');
+
+                const usedIds = new Set();
+                const uniqueId = (raw, prefix) => {
+                    let id = asText(raw);
+                    if (!id || usedIds.has(id)) id = this.makeId(prefix);
+                    usedIds.add(id);
+                    return id;
+                };
+                const dimensionMap = new Map();
+                const competencies = [];
+                rawQuestionRows.forEach(row => {
+                    if (!row.compName) throw new Error('題目設定中有資料列缺少「構面名稱」');
+                    if (!row.itemText) throw new Error(`「${row.compName}」中有資料列缺少「題目內容」`);
+                    const key = row.compId ? `id:${row.compId}` : `order:${row.compOrder}|name:${row.compName}`;
+                    let comp = dimensionMap.get(key);
+                    if (!comp) {
+                        comp = {
+                            id: uniqueId(row.compId, 'comp'),
+                            name: row.compName,
+                            description: row.description,
+                            resultText: row.resultText,
+                            items: []
+                        };
+                        dimensionMap.set(key, comp);
+                        competencies.push(comp);
+                    } else {
+                        if (!comp.description && row.description) comp.description = row.description;
+                        if (!comp.resultText && row.resultText) comp.resultText = row.resultText;
+                    }
+                    comp.items.push({
+                        id: uniqueId(row.itemId, 'item'),
+                        text: row.itemText
+                    });
+                });
+
+                if (!competencies.length || competencies.some(comp => !comp.items.length)) {
+                    throw new Error('每個構面至少需要一題');
+                }
+
+                if (!window.confirm(`確定匯入「${file.name}」嗎？\n\n這會覆蓋目前設定視窗中的活動文字、量表、構面與題目，但尚不會自動儲存到活動。`)) {
+                    return;
+                }
+
+                const imported = {
+                    ...current,
+                    title: asText(getBasic('活動名稱', current.title)) || current.title || '自評活動',
+                    resultTitle: asText(getBasic('結果頁標題', current.resultTitle)) || '自評結果',
+                    introText: asText(getBasic('學員作答說明', current.introText)),
+                    resultMode: parseResultMode(getBasic('高分通常代表', current.resultMode), current.resultMode),
+                    tieThreshold: Math.max(0, Math.min(3, Number(getBasic('相近結果判定差距', current.tieThreshold)) || 0)),
+                    dimensionLabel: asText(getBasic('構面名稱', current.dimensionLabel)) || '構面',
+                    itemLabel: asText(getBasic('單題名稱', current.itemLabel)) || '題目',
+                    highDimensionLabel: asText(getBasic('高分構面標題', current.highDimensionLabel)),
+                    lowDimensionLabel: asText(getBasic('低分構面標題', current.lowDimensionLabel)),
+                    highItemLabel: asText(getBasic('高分單題標題', current.highItemLabel)),
+                    lowItemLabel: asText(getBasic('低分單題標題', current.lowItemLabel)),
+                    rankingTitle: asText(getBasic('排序區標題', current.rankingTitle)),
+                    itemComparisonTitle: asText(getBasic('單題比較區標題', current.itemComparisonTitle)),
+                    resultExplanationTitle: asText(getBasic('主要結果說明區標題', current.resultExplanationTitle)),
+                    showDimensionNamesDuringAnswering: parseBoolean(
+                        getBasic('作答時顯示構面名稱', current.showDimensionNamesDuringAnswering),
+                        current.showDimensionNamesDuringAnswering
+                    ),
+                    resultNote: asText(getBasic('結果閱讀說明', current.resultNote)),
+                    competencies,
+                    scales,
+                    isActive: this.assessmentSettings.isActive,
+                    createdAt: this.assessmentSettings.createdAt
+                };
+
+                this.localSettings = normalizeSettings(imported);
+                this.localScaleCount = this.localSettings.scales.length;
+                const itemCount = competencies.reduce((sum, comp) => sum + comp.items.length, 0);
+                this.showMessage(`✅ 已匯入 ${competencies.length} 個構面、${itemCount} 題，請確認後儲存`);
+            } catch (err) {
+                this.showMessage('❌ 匯入失敗：' + (err?.message || err));
+            } finally {
+                input.value = '';
+            }
+        },
+        applyResultModeDefaults() {
+            const d = (this.localSettings.dimensionLabel || '構面').trim();
+            const i = (this.localSettings.itemLabel || '題目').trim();
+            if (this.localSettings.resultMode === 'positive') {
+                this.localSettings.highDimensionLabel = `相對較強的${d}`;
+                this.localSettings.lowDimensionLabel = `可優先發展的${d}`;
+                this.localSettings.highItemLabel = `較常展現的${i}`;
+                this.localSettings.lowItemLabel = `可優先練習的${i}`;
+                this.localSettings.resultNote = `請從自己各${d}與${i}的相對高低來閱讀結果。分數較高通常代表較常展現或較具優勢；分數較低則可作為後續發展參考，不代表能力好壞。`;
+            } else if (this.localSettings.resultMode === 'attention') {
+                this.localSettings.highDimensionLabel = `較需要留意的${d}`;
+                this.localSettings.lowDimensionLabel = `目前較少影響的${d}`;
+                this.localSettings.highItemLabel = `較常出現、可優先留意的${i}`;
+                this.localSettings.lowItemLabel = `較少出現的${i}`;
+                this.localSettings.resultNote = `請從自己各${d}與${i}的相對高低來閱讀結果。分數較高代表該情況較常出現或影響較大，並不表示個人能力較差，也不是診斷。`;
+            } else {
+                this.localSettings.highDimensionLabel = `相對較高的${d}`;
+                this.localSettings.lowDimensionLabel = `相對較低的${d}`;
+                this.localSettings.highItemLabel = `相對較高的${i}`;
+                this.localSettings.lowItemLabel = `相對較低的${i}`;
+                this.localSettings.resultNote = `請從自己各${d}與${i}的相對高低來閱讀結果。這不是與別人比較，也不預設分數高低代表好或壞。`;
+            }
+            this.localSettings.rankingTitle = `${d}相對排序`;
+            this.localSettings.itemComparisonTitle = `${i}相對高低`;
+            this.localSettings.resultExplanationTitle = '主要結果說明';
+            this.showMessage('✅ 已產生建議結果文字，可再自行修改');
         },
         updateScaleCount() {
             const count = Math.max(2, Math.min(10, Number(this.localScaleCount) || 5));
             const old = this.localSettings.scales || [];
             this.localSettings.scales = Array.from({ length: count }, (_, index) => {
                 const found = old[index];
-                return found ? { ...found, value: index + 1 } : { value: index + 1, name: `${index+1} 分`, desc: '' };
+                return found ? { ...found, value:index+1 } : { value:index+1, name:`${index+1} 分`, desc:'' };
             });
         },
         addCompetency() {
-            this.localSettings.competencies.push({ id: this.makeId('comp'), name: '新職能', items: [{ id: this.makeId('item'), text: '' }] });
+            this.localSettings.competencies.push({ id:this.makeId('comp'), name:`新${this.localSettings.dimensionLabel || '構面'}`, description:'', resultText:'', items:[{ id:this.makeId('item'), text:'' }] });
         },
         removeCompetency(index) {
-            if (this.localSettings.competencies.length <= 1) { this.showMessage('⚠️ 至少需保留一項職能'); return; }
+            if (this.localSettings.competencies.length <= 1) { this.showMessage(`⚠️ 至少需保留一項${this.localSettings.dimensionLabel || '構面'}`); return; }
             this.localSettings.competencies.splice(index, 1);
         },
         moveCompetency(index, direction) {
@@ -1051,11 +1703,9 @@ createApp({
             const list = this.localSettings.competencies;
             [list[index], list[target]] = [list[target], list[index]];
         },
-        addItem(comp) {
-            comp.items.push({ id: this.makeId('item'), text: '' });
-        },
+        addItem(comp) { comp.items.push({ id:this.makeId('item'), text:'' }); },
         removeItem(comp, index) {
-            if (comp.items.length <= 1) { this.showMessage('⚠️ 每項職能至少需保留一個行為題目'); return; }
+            if (comp.items.length <= 1) { this.showMessage(`⚠️ 每項${this.localSettings.dimensionLabel || '構面'}至少需保留一個${this.localSettings.itemLabel || '題目'}`); return; }
             comp.items.splice(index, 1);
         },
         moveItem(comp, index, direction) {
@@ -1066,25 +1716,50 @@ createApp({
         saveSettings() {
             const title = (this.localSettings.title || '').trim();
             if (!title) { this.showMessage('⚠️ 活動名稱不可空白'); return; }
-            if (!this.localSettings.competencies.length) { this.showMessage('⚠️ 至少需要一項職能'); return; }
+            if (!this.localSettings.competencies.length) { this.showMessage(`⚠️ 至少需要一項${this.localSettings.dimensionLabel || '構面'}`); return; }
+            const usedIds = new Set();
             for (const comp of this.localSettings.competencies) {
                 comp.name = (comp.name || '').trim();
-                if (!comp.name) { this.showMessage('⚠️ 職能名稱不可空白'); return; }
-                if (!Array.isArray(comp.items) || !comp.items.length) { this.showMessage(`⚠️「${comp.name}」至少需要一個行為題目`); return; }
+                comp.description = (comp.description || '').trim();
+                comp.resultText = (comp.resultText || '').trim();
+                if (!comp.name) { this.showMessage(`⚠️ ${this.localSettings.dimensionLabel || '構面'}名稱不可空白`); return; }
+                if (!comp.id || usedIds.has(comp.id)) comp.id = this.makeId('comp');
+                usedIds.add(comp.id);
+                if (!Array.isArray(comp.items) || !comp.items.length) { this.showMessage(`⚠️「${comp.name}」至少需要一個${this.localSettings.itemLabel || '題目'}`); return; }
                 for (const item of comp.items) {
                     item.text = (item.text || '').trim();
-                    if (!item.text) { this.showMessage(`⚠️「${comp.name}」中有空白題目`); return; }
-                    if (!item.id) item.id = this.makeId('item');
+                    if (!item.text) { this.showMessage(`⚠️「${comp.name}」中有空白${this.localSettings.itemLabel || '題目'}`); return; }
+                    if (!item.id || usedIds.has(item.id)) item.id = this.makeId('item');
+                    usedIds.add(item.id);
                 }
-                if (!comp.id) comp.id = this.makeId('comp');
             }
             this.updateScaleCount();
             for (const scale of this.localSettings.scales) {
                 scale.name = (scale.name || '').trim() || `${scale.value} 分`;
                 scale.desc = (scale.desc || '').trim();
             }
+            const textFields = ['introText','resultTitle','dimensionLabel','itemLabel','highDimensionLabel','lowDimensionLabel','highItemLabel','lowItemLabel','rankingTitle','itemComparisonTitle','resultExplanationTitle','resultNote'];
+            textFields.forEach(key => this.localSettings[key] = String(this.localSettings[key] || '').trim());
+            if (!this.localSettings.dimensionLabel) this.localSettings.dimensionLabel = '構面';
+            if (!this.localSettings.itemLabel) this.localSettings.itemLabel = '題目';
+            this.localSettings.tieThreshold = Math.max(0, Math.min(3, Number(this.localSettings.tieThreshold) || 0));
             const payload = {
                 title,
+                introText: this.localSettings.introText,
+                resultTitle: this.localSettings.resultTitle || '自評結果',
+                resultMode: this.localSettings.resultMode || 'neutral',
+                dimensionLabel: this.localSettings.dimensionLabel,
+                itemLabel: this.localSettings.itemLabel,
+                highDimensionLabel: this.localSettings.highDimensionLabel,
+                lowDimensionLabel: this.localSettings.lowDimensionLabel,
+                highItemLabel: this.localSettings.highItemLabel,
+                lowItemLabel: this.localSettings.lowItemLabel,
+                rankingTitle: this.localSettings.rankingTitle,
+                itemComparisonTitle: this.localSettings.itemComparisonTitle,
+                resultExplanationTitle: this.localSettings.resultExplanationTitle,
+                resultNote: this.localSettings.resultNote,
+                showDimensionNamesDuringAnswering: this.localSettings.showDimensionNamesDuringAnswering !== false,
+                tieThreshold: this.localSettings.tieThreshold,
                 competencies: cloneData(this.localSettings.competencies),
                 scales: cloneData(this.localSettings.scales),
                 settingsUpdatedAt: Date.now()
@@ -1092,14 +1767,14 @@ createApp({
             const performSave = () => {
                 Promise.all([
                     db.ref(`selfAssessments/${this.assessmentId}/settings`).update(payload),
-                    db.ref(`selfAssessmentsList/${this.assessmentId}`).update({ name: title })
+                    db.ref(`selfAssessmentsList/${this.assessmentId}`).update({ name:title })
                 ]).then(() => {
                     this.showSettingsModal = false;
-                    this.showMessage('✅ 題目與計分設定已儲存');
+                    this.showMessage('✅ 自評設定已儲存');
                 }).catch(err => this.showMessage('❌ 儲存失敗：' + err.message));
             };
             if (this.responseArray.length) {
-                this.askConfirm('目前已有學員填答。儲存後，講師端結果會依最新題目與計分設定重新計算；新增題目後，已填答者需再進入修改並完成新題目。確定儲存嗎？', performSave);
+                this.askConfirm('目前已有學員填答。儲存後，結果會依最新構面、題目與量表重新計算；新增題目後，已填答者需重新進入完成新題目。確定儲存嗎？', performSave);
             } else {
                 performSave();
             }
@@ -1126,7 +1801,7 @@ createApp({
             if (draft) {
                 try {
                     const parsed = JSON.parse(draft);
-                    this.studentForm = { name: parsed.name || '', answers: parsed.answers || {} };
+                    this.studentForm = { name:parsed.name || '', answers:parsed.answers || {} };
                 } catch (_) {}
             }
             if (savedSubmission) {
@@ -1134,7 +1809,7 @@ createApp({
                 db.ref(`selfAssessments/${this.assessmentId}/responses/${savedSubmission}`).once('value').then(snap => {
                     const val = snap.val();
                     if (val) {
-                        this.studentForm = { name: val.name || '', answers: val.answers || {} };
+                        this.studentForm = { name:val.name || '', answers:val.answers || {} };
                         this.studentStage = 'submitted';
                     } else {
                         localStorage.removeItem(this.submissionKey());
@@ -1143,92 +1818,95 @@ createApp({
                 });
             }
         },
-        setAnswer(itemId, score) {
-            this.studentForm.answers[itemId] = score;
+        isValidScore(value) {
+            const score = Number(value);
+            return score >= 1 && score <= this.maxScale;
         },
-        answeredInCompetency(comp) {
-            return comp.items.filter(i => { const v = Number(this.studentForm.answers[i.id]); return v >= 1 && v <= this.maxScale; }).length;
+        setAnswer(itemId, score) { this.studentForm.answers[itemId] = score; },
+        questionNumber(compIndex, itemIndex) {
+            let total = itemIndex + 1;
+            for (let i = 0; i < compIndex; i++) total += (this.competencies[i].items || []).length;
+            return total;
         },
+        answeredInCompetency(comp) { return (comp.items || []).filter(i => this.isValidScore(this.studentForm.answers[i.id])).length; },
         calculateCompetency(answers, competencyId) {
             const comp = this.competencies.find(c => c.id === competencyId);
             if (!comp || !Array.isArray(comp.items) || !comp.items.length) return 0;
-            const sum = comp.items.reduce((total, item) => {
-                const value = Number(answers?.[item.id]);
-                return total + (value >= 1 && value <= this.maxScale ? value : 0);
-            }, 0);
-            return sum / comp.items.length;
+            const values = comp.items.map(item => Number(answers?.[item.id])).filter(value => value >= 1 && value <= this.maxScale);
+            return values.length ? values.reduce((a,b) => a+b,0) / values.length : 0;
         },
         buildCompetencyRanking(answers) {
             return this.competencies.map((comp,index) => ({
-                id: comp.id,
-                name: comp.name,
-                score: Number(this.calculateCompetency(answers || {}, comp.id).toFixed(2)),
-                originalIndex: index
+                id:comp.id,
+                name:comp.name,
+                score:Number(this.calculateCompetency(answers || {}, comp.id).toFixed(2)),
+                originalIndex:index
             })).sort((a,b) => b.score - a.score || a.originalIndex - b.originalIndex);
         },
         pickHighestCompetencies(ranking) {
             if (!ranking || !ranking.length) return [];
             const highest = ranking[0].score;
-            return ranking.filter(x => Math.abs(x.score - highest) < 0.0001);
+            const threshold = Math.max(0, Number(this.assessmentSettings.tieThreshold) || 0);
+            return ranking.filter(x => highest - x.score <= threshold + 0.0001);
         },
         pickLowestCompetencies(ranking) {
             if (!ranking || !ranking.length) return [];
             const lowest = ranking[ranking.length - 1].score;
-            return ranking.filter(x => Math.abs(x.score - lowest) < 0.0001);
+            const threshold = Math.max(0, Number(this.assessmentSettings.tieThreshold) || 0);
+            const lows = ranking.filter(x => x.score - lowest <= threshold + 0.0001);
+            const highIds = new Set(this.pickHighestCompetencies(ranking).map(x => x.id));
+            return lows.some(x => highIds.has(x.id)) ? [] : lows;
         },
         buildBehaviorRanking(answers) {
             let originalIndex = 0;
-            return this.competencies.flatMap(comp => (comp.items || []).map(item => {
-                const entry = {
-                    id: item.id,
-                    text: item.text,
-                    competencyId: comp.id,
-                    competencyName: comp.name,
-                    score: Number(answers?.[item.id]),
-                    originalIndex: originalIndex++
-                };
-                return entry;
-            })).filter(x => x.score >= 1 && x.score <= this.maxScale)
+            return this.competencies.flatMap(comp => (comp.items || []).map(item => ({
+                id:item.id,
+                text:item.text,
+                competencyId:comp.id,
+                competencyName:comp.name,
+                score:Number(answers?.[item.id]),
+                originalIndex:originalIndex++
+            }))).filter(x => x.score >= 1 && x.score <= this.maxScale)
               .sort((a,b) => b.score - a.score || a.originalIndex - b.originalIndex);
         },
-        responseCompetencyRanking(response) {
-            return this.buildCompetencyRanking(response?.answers || {});
+        buildPrimaryExplanations(highEntries) {
+            return (highEntries || []).map(entry => {
+                const comp = this.competencies.find(c => c.id === entry.id);
+                const text = (comp?.resultText || comp?.description || '').trim();
+                return { id:entry.id, name:entry.name, text };
+            }).filter(entry => entry.text);
         },
-        responseHighestCompetencies(response) {
-            return this.pickHighestCompetencies(this.responseCompetencyRanking(response));
-        },
-        responseLowestCompetencies(response) {
-            return this.pickLowestCompetencies(this.responseCompetencyRanking(response));
-        },
-        responseTopBehaviors(response) {
-            return this.buildBehaviorRanking(response?.answers || {}).slice(0, 3);
-        },
+        responseCompetencyRanking(response) { return this.buildCompetencyRanking(response?.answers || {}); },
+        responseHighestCompetencies(response) { return this.pickHighestCompetencies(this.responseCompetencyRanking(response)); },
+        responseLowestCompetencies(response) { return this.pickLowestCompetencies(this.responseCompetencyRanking(response)); },
+        responseTopBehaviors(response) { return this.buildBehaviorRanking(response?.answers || {}).slice(0,3); },
         responseBottomBehaviors(response) {
-            return this.buildBehaviorRanking(response?.answers || {})
-                .sort((a,b) => a.score - b.score || a.originalIndex - b.originalIndex)
-                .slice(0, 3);
+            return this.buildBehaviorRanking(response?.answers || {}).sort((a,b) => a.score - b.score || a.originalIndex - b.originalIndex).slice(0,3);
         },
-        studentCompetencyAverage(id) { return this.calculateCompetency(this.studentForm.answers, id).toFixed(2); },
+        responseItemHasVariation(response) {
+            const ranking = this.buildBehaviorRanking(response?.answers || {});
+            return ranking.length > 0 && ranking[0].score !== ranking[ranking.length - 1].score;
+        },
+        responsePrimaryExplanations(response) { return this.buildPrimaryExplanations(this.responseHighestCompetencies(response)); },
         submitResponse() {
             if (!this.assessmentSettings.isActive) { this.showMessage('⚠️ 本活動目前已關閉填答'); return; }
             if (!this.studentForm.name.trim()) { this.showMessage('⚠️ 請先填寫姓名'); window.scrollTo({top:0,behavior:'smooth'}); return; }
             if (this.answeredCount !== this.totalItems) {
-                const missing = this.totalItems - this.answeredCount;
-                this.showMessage(`⚠️ 還有 ${missing} 題尚未作答`);
+                this.showMessage(`⚠️ 還有 ${this.totalItems - this.answeredCount} 題尚未作答`);
                 return;
             }
             this.isSubmitting = true;
             if (!this.submissionId) this.submissionId = db.ref(`selfAssessments/${this.assessmentId}/responses`).push().key;
-            const compAverages = {};
-            this.competencies.forEach(c => compAverages[c.id] = Number(this.calculateCompetency(this.studentForm.answers, c.id).toFixed(2)));
-            const oldSubmittedAtPromise = db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}/submittedAt`).once('value');
-            oldSubmittedAtPromise.then(snap => {
+            const dimensionAverages = {};
+            this.competencies.forEach(c => dimensionAverages[c.id] = Number(this.calculateCompetency(this.studentForm.answers, c.id).toFixed(2)));
+            db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}/submittedAt`).once('value').then(snap => {
                 const payload = {
-                    name: this.studentForm.name.trim(),
-                    answers: { ...this.studentForm.answers },
-                    competencyAverages: compAverages,
-                    submittedAt: snap.val() || Date.now(),
-                    updatedAt: Date.now()
+                    name:this.studentForm.name.trim(),
+                    answers:{ ...this.studentForm.answers },
+                    dimensionAverages,
+                    competencyAverages:dimensionAverages,
+                    submittedAt:snap.val() || Date.now(),
+                    updatedAt:Date.now()
                 };
                 return db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}`).set(payload);
             }).then(() => {
@@ -1244,7 +1922,7 @@ createApp({
                 localStorage.removeItem(this.submissionKey());
                 localStorage.removeItem(this.draftKey());
                 this.submissionId = '';
-                this.studentForm = { name: '', answers: {} };
+                this.studentForm = { name:'', answers:{} };
                 this.studentStage = 'form';
                 window.scrollTo({top:0,behavior:'smooth'});
             });
@@ -1258,25 +1936,22 @@ createApp({
             try {
                 await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                 const canvas = await html2canvas(target, {
-                    backgroundColor: '#ffffff',
-                    scale: Math.max(2, Math.min(3, window.devicePixelRatio || 1)),
-                    useCORS: true,
-                    logging: false,
-                    scrollX: 0,
-                    scrollY: -window.scrollY,
-                    windowWidth: document.documentElement.clientWidth
+                    backgroundColor:'#ffffff',
+                    scale:Math.max(2, Math.min(3, window.devicePixelRatio || 1)),
+                    useCORS:true,
+                    logging:false,
+                    scrollX:0,
+                    scrollY:-window.scrollY,
+                    windowWidth:document.documentElement.clientWidth
                 });
-                const fileName = `職能自評結果_${(this.assessmentSettings.title || '活動').replace(/[\/:*?"<>|]/g, '_')}_${(this.studentForm.name || '學員').replace(/[\/:*?"<>|]/g, '_')}.png`;
+                const safe = value => String(value || '').replace(/[\\/:*?"<>|]/g, '_');
+                const fileName = `自評結果_${safe(this.assessmentSettings.title || '活動')}_${safe(this.studentForm.name || '學員')}.png`;
                 const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
                 if (!blob) throw new Error('無法建立 PNG 檔案');
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
-                a.href = url;
-                a.download = fileName;
-                document.body.appendChild(a);
-                a.click();
-                a.remove();
-                URL.revokeObjectURL(url);
+                a.href = url; a.download = fileName;
+                document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
                 this.showMessage('🖼️ PNG 圖檔已匯出');
             } catch (err) {
                 this.showMessage('❌ PNG 匯出失敗：' + (err?.message || err));
@@ -1286,21 +1961,20 @@ createApp({
         },
         competencyAverage(id) {
             if (!this.responseArray.length) return '0.00';
-            const avg = this.responseArray.reduce((sum,r) => sum + this.calculateCompetency(r.answers || {}, id), 0) / this.responseArray.length;
-            return avg.toFixed(2);
+            const values = this.responseArray.map(r => {
+                const comp = this.competencies.find(c => c.id === id);
+                const validCount = (comp?.items || []).filter(item => this.isValidScore(r.answers?.[item.id])).length;
+                return validCount ? this.calculateCompetency(r.answers || {}, id) : null;
+            }).filter(v => v !== null);
+            return values.length ? (values.reduce((a,b) => a+b,0) / values.length).toFixed(2) : '0.00';
         },
-        responseCompetencyScore(response, id) {
-            return Number(this.calculateCompetency(response.answers || {}, id)).toFixed(2);
-        },
-        displayScore(value) { return Number(value || 0).toFixed(2); },
+        responseCompetencyScore(response, id) { return Number(this.calculateCompetency(response.answers || {}, id)).toFixed(2); },
         itemAverage(itemId) {
             if (!this.responseArray.length) return '0.00';
             const vals = this.responseArray.map(r => Number(r.answers?.[itemId])).filter(v => v >= 1 && v <= this.maxScale);
             return vals.length ? (vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(2) : '0.00';
         },
-        itemDistribution(itemId, score) {
-            return this.responseArray.filter(r => Number(r.answers?.[itemId]) === score).length;
-        },
+        itemDistribution(itemId, score) { return this.responseArray.filter(r => Number(r.answers?.[itemId]) === score).length; },
         formatDate(ts) {
             if (!ts) return '-';
             return new Date(ts).toLocaleString('zh-TW', { year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
@@ -1311,7 +1985,13 @@ createApp({
         },
         exportCsv() {
             if (!this.responseArray.length) { this.showMessage('目前沒有資料可匯出'); return; }
-            const headers = ['姓名','完成時間', ...this.competencies.map(c => `${c.name}平均`), '相對較高職能', '相對較低職能', ...this.allItems.map((i,idx) => `第${idx+1}題_${i.text}`)];
+            const headers = [
+                '姓名','完成時間',
+                ...this.competencies.map(c => `${c.name}平均`),
+                this.highDimensionLabel,
+                this.lowDimensionLabel,
+                ...this.allItems.map((i,idx) => `第${idx+1}題_${i.text}`)
+            ];
             const rows = this.responseArray.map(r => [
                 r.name,
                 this.formatDate(r.submittedAt),
@@ -1325,7 +2005,7 @@ createApp({
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `職能自評結果_${this.assessmentSettings.title || '活動'}_${new Date().toISOString().slice(0,10)}.csv`;
+            a.download = `自評結果_${(this.assessmentSettings.title || '活動').replace(/[\\/:*?"<>|]/g, '_')}_${new Date().toISOString().slice(0,10)}.csv`;
             document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
             this.showMessage('💾 CSV 已匯出');
         }
