@@ -162,19 +162,7 @@
         .mobile-scale-summary-item { min-width:0; padding:9px 3px 8px; border-radius:9px; background:var(--rating-yellow); border:1px solid #e8e47a; text-align:center; }
         .mobile-scale-summary-number { font-size:1.3rem; line-height:1; font-weight:900; color:var(--slate-900); }
         .mobile-scale-summary-name { margin-top:6px; color:#334155; font-size:.78rem; line-height:1.25; font-weight:900; overflow-wrap:anywhere; }
-        .mobile-scale-direction { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:7px; margin:9px 2px 0; color:var(--slate-500); font-size:.78rem; font-weight:800; }
-        .mobile-scale-direction-line { height:2px; position:relative; background:linear-gradient(90deg,#cbd5e1,#64748b); border-radius:999px; }
-        .mobile-scale-direction-line::after { content:'›'; position:absolute; right:-2px; top:50%; transform:translateY(-54%); color:#64748b; font-size:1.25rem; font-weight:900; }
-        .mobile-scale-details { margin-top:10px; border-top:1px solid var(--slate-200); }
-        .mobile-scale-details summary { list-style:none; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px 4px 2px; color:var(--blue-dark); font-weight:900; -webkit-tap-highlight-color:transparent; }
-        .mobile-scale-details summary::-webkit-details-marker { display:none; }
-        .mobile-scale-details summary::after { content:'⌄'; font-size:1rem; transition:transform .2s ease; }
-        .mobile-scale-details[open] summary::after { transform:rotate(180deg); }
-        .mobile-scale-detail-list { display:grid; gap:7px; margin-top:10px; }
-        .mobile-scale-detail-row { display:grid; grid-template-columns:42px minmax(0,1fr); gap:10px; align-items:center; padding:9px 10px; border:1px solid #e8e47a; border-radius:9px; background:#fffef0; }
-        .mobile-scale-detail-number { width:38px; height:38px; display:flex; align-items:center; justify-content:center; border-radius:9px; background:var(--rating-yellow); color:var(--slate-900); font-size:1.2rem; font-weight:900; }
-        .mobile-scale-detail-name { color:var(--slate-900); font-weight:900; line-height:1.35; }
-        .mobile-scale-detail-desc { margin-top:2px; color:#64748b; font-size:.82rem; line-height:1.45; }
+        .mobile-scale-summary-frequency { margin-top:5px; color:#64748b; font-size:.7rem; line-height:1.2; font-weight:800; white-space:nowrap; }
         .progress-card { position: sticky; top: 8px; z-index: 50; margin-bottom: 16px; padding: 14px 18px; }
         .progress-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-weight: 900; }
         .progress-track { height: 10px; background: var(--slate-100); border-radius: 999px; overflow: hidden; margin-top: 8px; }
@@ -909,31 +897,15 @@
                     </div>
                 </div>
 
-                <!-- 手機版：五格精簡量尺，完整說明需要時才展開 -->
+                <!-- 手機版：一次完整呈現分數、名稱與頻率，不需展開 -->
                 <div class="mobile-scale-guide">
                     <div class="mobile-scale-summary" :style="{'--mobile-scale-columns':Math.max(1,Math.min(scales.length,5))}">
-                        <div v-for="scale in scales" :key="'mobile_scale_'+scale.value" class="mobile-scale-summary-item">
+                        <div v-for="(scale,index) in scales" :key="'mobile_scale_'+scale.value" class="mobile-scale-summary-item">
                             <div class="mobile-scale-summary-number">{{ scale.value }}</div>
                             <div class="mobile-scale-summary-name">{{ scale.name }}</div>
+                            <div v-if="scaleFrequencyLabel(scale,index)" class="mobile-scale-summary-frequency">{{ scaleFrequencyLabel(scale,index) }}</div>
                         </div>
                     </div>
-                    <div class="mobile-scale-direction" aria-hidden="true">
-                        <span>低</span>
-                        <span class="mobile-scale-direction-line"></span>
-                        <span>高</span>
-                    </div>
-                    <details class="mobile-scale-details">
-                        <summary>查看各分數完整說明</summary>
-                        <div class="mobile-scale-detail-list">
-                            <div v-for="scale in scales" :key="'mobile_detail_'+scale.value" class="mobile-scale-detail-row">
-                                <div class="mobile-scale-detail-number">{{ scale.value }}</div>
-                                <div>
-                                    <div class="mobile-scale-detail-name">{{ scale.name }}</div>
-                                    <div class="mobile-scale-detail-desc">{{ scale.desc }}</div>
-                                </div>
-                            </div>
-                        </div>
-                    </details>
                 </div>
             </div>
 
@@ -1404,6 +1376,11 @@ createApp({
         showMessage(msg) {
             this.toastMsg = msg;
             setTimeout(() => { if (this.toastMsg === msg) this.toastMsg = ''; }, 3000);
+        },
+        scaleFrequencyLabel(scale) {
+            const description = String(scale?.desc || '');
+            const match = description.match(/頻率\s*([0-9]+(?:\.[0-9]+)?)\s*%/i);
+            return match ? `(頻率${match[1]}%)` : '';
         },
         askConfirm(message, action) { this.confirmModal = { show: true, message, action }; },
         executeConfirm() {
