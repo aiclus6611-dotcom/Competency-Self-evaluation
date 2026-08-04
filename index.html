@@ -160,6 +160,10 @@
         .competency-count { color: #0369a1; font-weight: 900; white-space: nowrap; }
         .question-card { background: #fff; border: 1px solid var(--slate-200); border-top: 0; padding: 18px; }
         .question-card:last-child { border-radius: 0 0 12px 12px; }
+        .continuous-question-list .question-card { border-top: 1px solid var(--slate-200); }
+        .continuous-question-list .question-card:first-child { border-radius: 12px 12px 0 0; }
+        .continuous-question-list .question-card:last-child { border-radius: 0 0 12px 12px; }
+        .continuous-question-list .question-card:only-child { border-radius: 12px; }
         .question-text { font-size: 1.06rem; line-height: 1.65; font-weight: 700; color: #27364a; margin-bottom: 12px; }
         .rating-row { display: grid; gap: 8px; }
         .rating-btn { border: 2px solid var(--slate-200); background: #fff; border-radius: 10px; padding: 10px 5px; cursor: pointer; font-weight: 900; color: var(--slate-700); transition: .15s; }
@@ -641,12 +645,15 @@
                             <label>主要結果說明區標題</label>
                             <input class="field" v-model.trim="localSettings.resultExplanationTitle">
                         </div>
-                        <div class="settings-field">
-                            <label>作答時是否顯示構面名稱</label>
-                            <label class="check-row">
-                                <input type="checkbox" v-model="localSettings.showDimensionNamesDuringAnswering">
-                                <span>顯示構面名稱與簡介；取消勾選時只顯示「第幾部分」，可降低作答者被分類名稱影響。</span>
-                            </label>
+                        <div class="settings-field full">
+                            <label>學員作答時的題目呈現方式</label>
+                            <select class="field" v-model="localSettings.answerPresentationMode">
+                                <option value="dimension">顯示構面名稱與簡介，並依構面分組</option>
+                                <option value="section">隱藏構面名稱，只顯示「第幾部分」</option>
+                                <option value="continuous">不顯示任何分組標題，依原順序連續呈現</option>
+                                <option value="randomized">不顯示任何分組標題，並將全部題目隨機排序</option>
+                            </select>
+                            <div class="settings-note">選擇隨機排序時，每位學員開啟填答頁後會取得一組混合題序；同一頁面重新整理時會維持原題序。題目雖不再依構面排列，結果仍會依原本構面正確計分。</div>
                         </div>
                         <div class="settings-field full">
                             <label>結果閱讀說明</label>
@@ -838,21 +845,35 @@
                 <div class="progress-track"><div class="progress-fill" :style="{width:progressPercent+'%'}"></div></div>
             </div>
 
-            <section v-for="(comp,cIndex) in competencies" :key="comp.id" class="competency-section">
-                <div class="competency-header">
-                    <div>
-                        <h2>{{ assessmentSettings.showDimensionNamesDuringAnswering ? comp.name : '第 '+(cIndex+1)+' 部分' }}</h2>
-                        <div v-if="assessmentSettings.showDimensionNamesDuringAnswering && comp.description" class="competency-description">{{ comp.description }}</div>
+            <template v-if="usesGroupedQuestionLayout">
+                <section v-for="(comp,cIndex) in competencies" :key="comp.id" class="competency-section">
+                    <div class="competency-header">
+                        <div>
+                            <h2>{{ showsDimensionNamesDuringAnswering ? comp.name : '第 '+(cIndex+1)+' 部分' }}</h2>
+                            <div v-if="showsDimensionNamesDuringAnswering && comp.description" class="competency-description">{{ comp.description }}</div>
+                        </div>
+                        <span class="competency-count">{{ answeredInCompetency(comp) }} / {{ comp.items.length }}</span>
                     </div>
-                    <span class="competency-count">{{ answeredInCompetency(comp) }} / {{ comp.items.length }}</span>
-                </div>
-                <div v-for="(item,index) in comp.items" :key="item.id" class="question-card">
-                    <div class="question-text">{{ questionNumber(cIndex,index) }}. {{ item.text }}</div>
+                    <div v-for="(item,index) in comp.items" :key="item.id" class="question-card">
+                        <div class="question-text">{{ questionNumber(cIndex,index) }}. {{ item.text }}</div>
+                        <div class="rating-row" :style="{gridTemplateColumns:'repeat('+scales.length+',1fr)'}">
+                            <button v-for="scale in scales" :key="scale.value" type="button" class="rating-btn"
+                                    :class="{selected:Number(studentForm.answers[item.id])===scale.value}"
+                                    :title="scale.name + (scale.desc ? '：'+scale.desc : '')"
+                                    @click="setAnswer(item.id, scale.value)">{{ scale.value }}</button>
+                        </div>
+                    </div>
+                </section>
+            </template>
+
+            <section v-else class="competency-section continuous-question-list">
+                <div v-for="(entry,index) in studentQuestionEntries" :key="entry.item.id" class="question-card">
+                    <div class="question-text">{{ index+1 }}. {{ entry.item.text }}</div>
                     <div class="rating-row" :style="{gridTemplateColumns:'repeat('+scales.length+',1fr)'}">
                         <button v-for="scale in scales" :key="scale.value" type="button" class="rating-btn"
-                                :class="{selected:Number(studentForm.answers[item.id])===scale.value}"
+                                :class="{selected:Number(studentForm.answers[entry.item.id])===scale.value}"
                                 :title="scale.name + (scale.desc ? '：'+scale.desc : '')"
-                                @click="setAnswer(item.id, scale.value)">{{ scale.value }}</button>
+                                @click="setAnswer(entry.item.id, scale.value)">{{ scale.value }}</button>
                     </div>
                 </div>
             </section>
@@ -963,61 +984,61 @@ const SUPPRESSION_DIMENSIONS = [
     {
         id: 'context_interference',
         name: '情境干擾',
-        description: '發展行動容易被外界任務、訊息或環境變動中斷。',
-        resultText: '外在事情一多，原本安排的發展行動就容易被擱置；真正的阻力不一定是沒有意願，而是中斷後缺少重新接回進度的空間與方法。',
+        description: '發展行動容易受到臨時任務、忙碌狀態或執行條件影響而中斷。',
+        resultText: '外在事情一多，原本安排的發展行動就容易被擱置。真正的阻力不一定是沒有意願，而是受到干擾後，不容易重新安排並接回原本的進度。',
         items: [
-            { id: 'si01', text: '事情一忙，我原本安排的發展行動就容易被擱置。' },
-            { id: 'si02', text: '臨時任務、訊息或他人的需求一來，我就很難再回到原本的進度。' },
-            { id: 'si03', text: '原本安排的時間被占用後，我通常不會再找時間補回來。' },
-            { id: 'si04', text: '場地、工具或時間不夠理想時，我就容易決定先不做。' }
+            { id: 'si01', text: '臨時任務、訊息或他人的需求一來，我原本安排的發展行動就容易中斷。' },
+            { id: 'si02', text: '工作或生活一忙起來，我就很難繼續原本的發展計畫。' },
+            { id: 'si03', text: '原本安排的時間被占用後，我通常不會再找其他時間補回進度。' },
+            { id: 'si04', text: '當執行條件不如預期時，我就容易先把原本的發展行動擱著。' }
         ]
     },
     {
         id: 'motivation_loss',
         name: '動機耗損',
-        description: '開始時有意願，但動力會隨著時間、重複或看不到成果而下降。',
-        resultText: '你可能不是不想進步，而是行動的回饋太慢、重複感太高，讓原本的意願逐漸消耗。要持續推進，通常需要更短的回饋週期與看得見的小進展。',
+        description: '開始時有意願，但動力會隨著時間、回饋不足、新鮮感消失或反覆練習而下降。',
+        resultText: '你可能不是完全沒有意願，而是需要較短的回饋週期或看得見的小進展，才能維持投入。當新鮮感消失、成果不明顯或需要長期累積時，原本的動力就容易逐漸消耗。',
         items: [
-            { id: 'si05', text: '一開始很有興趣，但做過幾次後，動力就會明顯下降。' },
-            { id: 'si06', text: '短期看不到進步時，我會覺得繼續做下去好像沒有什麼用。' },
-            { id: 'si07', text: '即使知道這件事對自己有幫助，我仍常常提不起勁開始。' },
-            { id: 'si08', text: '需要反覆練習或持續累積時，我很容易覺得厭煩而中斷。' }
+            { id: 'si05', text: '起初我會很投入，但過一段時間後，動力就會明顯下降。' },
+            { id: 'si06', text: '短期看不到明顯進步時，我就會想要放棄。' },
+            { id: 'si07', text: '原本的新鮮感消失後，我容易轉去做別的事，讓原來的發展停下來。' },
+            { id: 'si08', text: '需要反覆練習或持續累積時，我很容易感到厭煩而中斷。' }
         ]
     },
     {
         id: 'emotional_reaction',
         name: '情緒反作用',
-        description: '挫折、失敗、壓力或回饋帶來的情緒，會讓行動停下來。',
-        resultText: '卡住你的可能不只是事情本身，而是做不好、被指出問題或進展緩慢時產生的情緒。情緒一上來，容易把一次挫折延伸成對整件事的逃避。',
+        description: '失敗、低落情緒、負面回饋或壓力，容易讓原本的行動停下來。',
+        resultText: '卡住你的可能不只是事情本身，而是失敗、負面回饋或壓力帶來的情緒。情緒一上來，容易把一次不順利延伸成暫停、避開甚至逃避原本的發展行動。',
         items: [
-            { id: 'si09', text: '一次做不好，就會讓我不太想再碰這件事。' },
-            { id: 'si10', text: '發現自己進步得比預期慢時，我容易失去信心。' },
+            { id: 'si09', text: '一次失敗或沒有達成計畫，就會讓我感到沮喪而停止行動。' },
+            { id: 'si10', text: '心情不好時，我容易暫停原本的發展行動。' },
             { id: 'si11', text: '被指出問題或收到不理想的回饋後，我會暫時避開這件事。' },
-            { id: 'si12', text: '壓力大或心情不好時，我常把原本的發展行動全部停下來。' }
+            { id: 'si12', text: '壓力太大時，我常會逃避原定的行動計畫。' }
         ]
     },
     {
         id: 'cognitive_rationalization',
-        name: '認知合理化',
-        description: '用看似合理的理由延後行動，讓自己暫時不用面對困難。',
-        resultText: '你可能很會替延後找到合理原因，例如等有空、等狀態好、先做更重要的事。這些理由未必是假的，但若反覆出現，就會讓發展行動一直停留在「之後再做」。',
+        name: '拖延與合理化',
+        description: '等待更好的狀態、持續準備或用其他理由延後，使原本想做的行動遲遲沒有開始。',
+        resultText: '你可能很容易替延後找到合理原因，例如等有空、等狀態好、再多準備一下，或先處理更重要的事。這些理由未必完全不合理，但若反覆出現，就會讓行動一直停留在「之後再做」。',
         items: [
-            { id: 'si13', text: '我常告訴自己：「等有空一點、狀態好一點再開始。」' },
-            { id: 'si14', text: '做了一點之後，我容易覺得「這樣已經差不多了」，因此沒有繼續。' },
-            { id: 'si15', text: '進展不順時，我容易認為：「可能我本來就不適合做這件事。」' },
-            { id: 'si16', text: '我常用「現在有更重要的事」讓自己延後原本想做的行動。' }
+            { id: 'si13', text: '我常告訴自己：「等比較有空或狀態更好時，再開始也不遲。」' },
+            { id: 'si14', text: '我常花很多時間思考或準備，卻遲遲沒有真正開始。' },
+            { id: 'si15', text: '我常用「現在還有更重要的事」讓原本想做的行動一再延後。' },
+            { id: 'si16', text: '明明已經想要開始，我還是會先拖一下，最後就沒有做。' }
         ]
     },
     {
         id: 'system_lack',
-        name: '系統缺乏',
-        description: '缺少時間安排、明確下一步、進度記錄或重新啟動的支持結構。',
-        resultText: '你可能有發展意願，但沒有把意願轉成可持續的安排。當下一步不清楚、沒有固定時間、缺少記錄或提醒時，每次都要重新決定，行動就很容易中斷。',
+        name: '執行系統缺乏',
+        description: '缺少明確的時間安排、進度記錄、提醒方式、下一步或中斷後重新開始的方法。',
+        resultText: '你可能有發展意願，但還沒有把意願轉成能持續運作的安排。當執行時間、進度記錄、提醒、明確下一步或重新啟動的方法不足時，每次都要重新決定，行動就容易中斷。',
         items: [
-            { id: 'si17', text: '我知道自己想改善什麼，但沒有固定安排什麼時候要做。' },
-            { id: 'si18', text: '我有想發展的方向，卻常常不知道下一步具體要做什麼。' },
-            { id: 'si19', text: '我很少記錄自己的進度，也不清楚上次中斷在什麼地方。' },
-            { id: 'si20', text: '卡住或中斷後，我沒有固定的提醒、工具或協助方式，幫助自己重新開始。' }
+            { id: 'si17', text: '在發展自己時，我常常沒有設定明確的執行時間或頻率。' },
+            { id: 'si18', text: '我常因為沒有記錄進度或設定提醒，而忘了繼續原本的發展行動。' },
+            { id: 'si19', text: '我知道自己想改善什麼，卻常常不知道下一步具體要做什麼。' },
+            { id: 'si20', text: '計畫中斷後，我常常不知道要從哪裡重新開始。' }
         ]
     }
 ];
@@ -1047,6 +1068,7 @@ function baseSettings(title = '') {
         itemComparisonTitle: '單題相對高低',
         resultExplanationTitle: '主要結果說明',
         resultNote: '請從自己各構面與題目的相對高低來閱讀結果。這不是與別人比較，也不代表絕對好壞，而是協助您看見目前較明顯的模式。',
+        answerPresentationMode: 'dimension',
         showDimensionNamesDuringAnswering: true,
         tieThreshold: 0,
         competencies: cloneData(GENERAL_DIMENSIONS),
@@ -1071,6 +1093,7 @@ function competencySettings(title = '職能行為自評') {
         itemComparisonTitle: '行為相對高低',
         resultExplanationTitle: '主要職能結果說明',
         resultNote: '請從自己各項職能與行為的相對高低來閱讀結果。這不是與別人比較，也不是用單一高低分判定能力好壞。',
+        answerPresentationMode: 'dimension',
         showDimensionNamesDuringAnswering: true,
         tieThreshold: 0,
         competencies: cloneData(COMPETENCY_DIMENSIONS),
@@ -1095,7 +1118,8 @@ function suppressionSettings(title = '發展抑制因子自評') {
         itemComparisonTitle: '常見中斷情況相對高低',
         resultExplanationTitle: '這些結果可能代表什麼',
         resultNote: '這份結果用來辨識您在發展過程中較常出現的中斷來源。分數較高代表該情況較常影響您，不是能力好壞，也不是心理診斷。請優先觀察最高的因子，而不需要一次處理所有問題。',
-        showDimensionNamesDuringAnswering: true,
+        answerPresentationMode: 'randomized',
+        showDimensionNamesDuringAnswering: false,
         tieThreshold: 0.25,
         competencies: cloneData(SUPPRESSION_DIMENSIONS),
         scales: cloneData(SUPPRESSION_SCALES)
@@ -1116,13 +1140,19 @@ function normalizeSettings(value = {}) {
         comp.resultText = comp.resultText || '';
         comp.items = Array.isArray(comp.items) ? comp.items : [];
     });
+    const validPresentationModes = ['dimension', 'section', 'continuous', 'randomized'];
+    const legacyPresentationMode = source.showDimensionNamesDuringAnswering === false ? 'section' : 'dimension';
+    const answerPresentationMode = validPresentationModes.includes(source.answerPresentationMode)
+        ? source.answerPresentationMode
+        : legacyPresentationMode;
     return {
         ...fallback,
         ...source,
         competencies,
         scales: scales.map((s,index) => ({ value:index+1, name:s.name || `${index+1} 分`, desc:s.desc || '' })),
         tieThreshold: Math.max(0, Number(source.tieThreshold ?? fallback.tieThreshold) || 0),
-        showDimensionNamesDuringAnswering: source.showDimensionNamesDuringAnswering !== false
+        answerPresentationMode,
+        showDimensionNamesDuringAnswering: answerPresentationMode === 'dimension'
     };
 }
 
@@ -1153,6 +1183,7 @@ createApp({
             isSubmitting: false,
             draftSaveTimer: null,
             studentStateRestored: false,
+            studentQuestionOrder: [],
             isExportingPng: false
         };
     },
@@ -1166,6 +1197,19 @@ createApp({
         primaryCardClass() { return this.assessmentSettings.resultMode === 'attention' ? 'low' : 'high'; },
         secondaryCardClass() { return this.assessmentSettings.resultMode === 'attention' ? 'high' : 'low'; },
         allItems() { return this.competencies.flatMap(c => c.items || []); },
+        answerPresentationMode() { return this.assessmentSettings.answerPresentationMode || 'dimension'; },
+        usesGroupedQuestionLayout() { return ['dimension','section'].includes(this.answerPresentationMode); },
+        showsDimensionNamesDuringAnswering() { return this.answerPresentationMode === 'dimension'; },
+        studentQuestionEntries() {
+            const entries = this.competencies.flatMap((comp,cIndex) => (comp.items || []).map((item,iIndex) => ({
+                item, comp, cIndex, iIndex
+            })));
+            if (this.answerPresentationMode !== 'randomized' || !this.studentQuestionOrder.length) return entries;
+            const entryMap = new Map(entries.map(entry => [entry.item.id, entry]));
+            const ordered = this.studentQuestionOrder.map(id => entryMap.get(id)).filter(Boolean);
+            const orderedIds = new Set(ordered.map(entry => entry.item.id));
+            return ordered.concat(entries.filter(entry => !orderedIds.has(entry.item.id)));
+        },
         maxScale() { return this.scales.length ? Math.max(...this.scales.map(s => Number(s.value) || 0)) : 5; },
         totalItems() { return this.allItems.length; },
         answeredCount() { return this.allItems.filter(item => this.isValidScore(this.studentForm.answers[item.id])).length; },
@@ -1336,7 +1380,10 @@ createApp({
                 this.competencies = cloneData(normalized.competencies);
                 this.scales = cloneData(normalized.scales);
                 document.title = `${normalized.title || '線上自評'}｜全面性自評系統`;
-                if (this.currentView === 'student' && !this.studentStateRestored) this.restoreStudentState();
+                if (this.currentView === 'student') {
+                    this.refreshStudentQuestionOrder();
+                    if (!this.studentStateRestored) this.restoreStudentState();
+                }
                 this.isLoading = false;
             }, err => {
                 this.isLoading = false;
@@ -1390,6 +1437,12 @@ createApp({
                     attention: '阻力、風險或需留意程度較高',
                     neutral: '不預設好壞，只呈現相對高低'
                 }[settings.resultMode] || '不預設好壞，只呈現相對高低';
+                const presentationText = {
+                    dimension: '顯示構面名稱與簡介，並依構面分組',
+                    section: '隱藏構面名稱，只顯示「第幾部分」',
+                    continuous: '不顯示任何分組標題，依原順序連續呈現',
+                    randomized: '不顯示任何分組標題，並將全部題目隨機排序'
+                }[settings.answerPresentationMode] || '顯示構面名稱與簡介，並依構面分組';
 
                 const instructionRows = [
                     ['全面性自評系統－Excel 題目組使用說明'],
@@ -1401,13 +1454,13 @@ createApp({
                     ['5. 完成後回到講師後台的「自評內容與結果設定」，點選「匯入題目組 Excel」。'],
                     ['6. 匯入只會先更新設定畫面，仍需按下「儲存自評設定」才會正式套用。'],
                     [''],
-                    ['檔案格式版本', '1.0']
+                    ['檔案格式版本', '1.1']
                 ];
 
                 const basicRows = [
                     ['欄位', '值'],
                     ['檔案類型', '全面性自評系統題目組'],
-                    ['範本格式版本', '1.0'],
+                    ['範本格式版本', '1.1'],
                     ['活動名稱', settings.title || '自評活動'],
                     ['結果頁標題', settings.resultTitle || '自評結果'],
                     ['學員作答說明', settings.introText || ''],
@@ -1422,7 +1475,7 @@ createApp({
                     ['排序區標題', settings.rankingTitle || ''],
                     ['單題比較區標題', settings.itemComparisonTitle || ''],
                     ['主要結果說明區標題', settings.resultExplanationTitle || ''],
-                    ['作答時顯示構面名稱', settings.showDimensionNamesDuringAnswering === false ? '否' : '是'],
+                    ['作答題目呈現方式', presentationText],
                     ['結果閱讀說明', settings.resultNote || '']
                 ];
 
@@ -1530,6 +1583,15 @@ createApp({
                     if (text === 'neutral' || text.includes('不預設')) return 'neutral';
                     return fallback;
                 };
+                const parsePresentationMode = (value, fallback) => {
+                    const text = asText(value);
+                    if (['dimension','section','continuous','randomized'].includes(text)) return text;
+                    if (text.includes('隨機')) return 'randomized';
+                    if (text.includes('不顯示任何') || text.includes('原順序連續')) return 'continuous';
+                    if (text.includes('第幾部分') || text.includes('隱藏構面')) return 'section';
+                    if (text.includes('顯示構面名稱') || text.includes('名稱與簡介')) return 'dimension';
+                    return fallback;
+                };
 
                 const current = normalizeSettings(this.localSettings || this.assessmentSettings);
                 const basicMap = {};
@@ -1634,10 +1696,12 @@ createApp({
                     rankingTitle: asText(getBasic('排序區標題', current.rankingTitle)),
                     itemComparisonTitle: asText(getBasic('單題比較區標題', current.itemComparisonTitle)),
                     resultExplanationTitle: asText(getBasic('主要結果說明區標題', current.resultExplanationTitle)),
-                    showDimensionNamesDuringAnswering: parseBoolean(
-                        getBasic('作答時顯示構面名稱', current.showDimensionNamesDuringAnswering),
-                        current.showDimensionNamesDuringAnswering
-                    ),
+                    answerPresentationMode: hasBasic('作答題目呈現方式')
+                        ? parsePresentationMode(getBasic('作答題目呈現方式', current.answerPresentationMode), current.answerPresentationMode)
+                        : (parseBoolean(
+                            getBasic('作答時顯示構面名稱', current.showDimensionNamesDuringAnswering),
+                            current.showDimensionNamesDuringAnswering
+                        ) ? 'dimension' : 'section'),
                     resultNote: asText(getBasic('結果閱讀說明', current.resultNote)),
                     competencies,
                     scales,
@@ -1743,6 +1807,9 @@ createApp({
             if (!this.localSettings.dimensionLabel) this.localSettings.dimensionLabel = '構面';
             if (!this.localSettings.itemLabel) this.localSettings.itemLabel = '題目';
             this.localSettings.tieThreshold = Math.max(0, Math.min(3, Number(this.localSettings.tieThreshold) || 0));
+            if (!['dimension','section','continuous','randomized'].includes(this.localSettings.answerPresentationMode)) {
+                this.localSettings.answerPresentationMode = 'dimension';
+            }
             const payload = {
                 title,
                 introText: this.localSettings.introText,
@@ -1758,7 +1825,10 @@ createApp({
                 itemComparisonTitle: this.localSettings.itemComparisonTitle,
                 resultExplanationTitle: this.localSettings.resultExplanationTitle,
                 resultNote: this.localSettings.resultNote,
-                showDimensionNamesDuringAnswering: this.localSettings.showDimensionNamesDuringAnswering !== false,
+                answerPresentationMode: ['dimension','section','continuous','randomized'].includes(this.localSettings.answerPresentationMode)
+                    ? this.localSettings.answerPresentationMode
+                    : 'dimension',
+                showDimensionNamesDuringAnswering: this.localSettings.answerPresentationMode === 'dimension',
                 tieThreshold: this.localSettings.tieThreshold,
                 competencies: cloneData(this.localSettings.competencies),
                 scales: cloneData(this.localSettings.scales),
@@ -1790,6 +1860,33 @@ createApp({
                     .then(() => this.showMessage('🗑️ 填答結果已清空'))
                     .catch(err => this.showMessage('❌ 清空失敗：' + err.message));
             });
+        },
+        questionOrderKey() { return `self_assessment_question_order_${this.assessmentId}`; },
+        refreshStudentQuestionOrder() {
+            if (this.currentView !== 'student' || this.answerPresentationMode !== 'randomized') {
+                this.studentQuestionOrder = [];
+                return;
+            }
+            const itemIds = this.competencies.flatMap(comp => (comp.items || []).map(item => item.id));
+            if (!itemIds.length) {
+                this.studentQuestionOrder = [];
+                return;
+            }
+            try {
+                const saved = JSON.parse(sessionStorage.getItem(this.questionOrderKey()) || '[]');
+                const savedSet = new Set(saved);
+                if (Array.isArray(saved) && saved.length === itemIds.length && itemIds.every(id => savedSet.has(id))) {
+                    this.studentQuestionOrder = saved;
+                    return;
+                }
+            } catch (_) {}
+            const shuffled = [...itemIds];
+            for (let i = shuffled.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+            }
+            this.studentQuestionOrder = shuffled;
+            try { sessionStorage.setItem(this.questionOrderKey(), JSON.stringify(shuffled)); } catch (_) {}
         },
         draftKey() { return `self_assessment_draft_${this.assessmentId}`; },
         submissionKey() { return `self_assessment_submission_${this.assessmentId}`; },
