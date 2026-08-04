@@ -134,6 +134,10 @@
         .dist-cell { background: var(--slate-50); border: 1px solid var(--slate-200); border-radius: 8px; text-align: center; padding: 8px 4px; font-size: .88rem; }
         .dist-cell strong { display: block; color: var(--slate-900); font-size: 1.05rem; }
         .teacher-empty { text-align: center; color: var(--slate-500); padding: 50px 20px; }
+        .draft-status-badge { display:inline-flex; align-items:center; justify-content:center; padding:5px 9px; border-radius:999px; background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; font-size:.82rem; font-weight:900; white-space:nowrap; }
+        .draft-name-empty { color:#b45309; font-style:italic; font-weight:800; }
+        .draft-actions { display:flex; gap:7px; flex-wrap:wrap; }
+        .draft-note { margin:0 0 16px; padding:12px 14px; border-radius:10px; background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; line-height:1.65; }
 
         /* 學員端 */
         .student-wrapper { max-width: 860px; margin: 0 auto; padding: 22px 16px 100px; }
@@ -143,6 +147,8 @@
         .identity-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 16px; }
         .identity-grid label { display: block; font-weight: 800; color: var(--slate-700); margin-bottom: 6px; }
         .required { color: var(--red); }
+        .field.missing-field { border-color:#ef4444; background:#fff1f2; box-shadow:0 0 0 3px rgba(239,68,68,.13); }
+        .missing-field-note { margin-top:7px; color:#b91c1c; font-weight:900; font-size:.9rem; }
         .scale-card { margin-bottom: 16px; padding: 18px; }
         .scale-card h2 { margin: 0 0 12px; font-size: 1.2rem; color: var(--slate-900); }
         .scale-grid { display: grid; gap: 8px; }
@@ -164,6 +170,9 @@
         .continuous-question-list .question-card:first-child { border-radius: 12px 12px 0 0; }
         .continuous-question-list .question-card:last-child { border-radius: 0 0 12px 12px; }
         .continuous-question-list .question-card:only-child { border-radius: 12px; }
+        .question-card { scroll-margin-top:90px; }
+        .question-card.missing-answer { border:2px solid #ef4444 !important; background:#fff7f7; box-shadow:0 0 0 4px rgba(239,68,68,.09); position:relative; }
+        .missing-answer-label { display:inline-flex; align-items:center; gap:4px; margin:0 0 9px; padding:4px 9px; border-radius:999px; background:#fee2e2; color:#b91c1c; font-size:.82rem; font-weight:900; }
         .question-text { font-size: 1.06rem; line-height: 1.65; font-weight: 700; color: #27364a; margin-bottom: 12px; }
         .rating-row { display: grid; gap: 8px; }
         .rating-btn { border: 2px solid var(--slate-200); background: #fff; border-radius: 10px; padding: 10px 5px; cursor: pointer; font-weight: 900; color: var(--slate-700); transition: .15s; }
@@ -460,7 +469,8 @@
                 <button v-else class="btn btn-danger" @click="toggleActive(false)">⏸️ 關閉填答</button>
                 <button class="btn btn-outline" @click="copyLink(assessmentId,'student')">🔗 學員連結</button>
                 <button class="btn btn-outline" @click="exportCsv" :disabled="responseArray.length===0">💾 匯出 CSV</button>
-                <button class="btn btn-danger" @click="clearResponses" :disabled="responseArray.length===0">🗑️ 清空結果</button>
+                <button class="btn btn-warning" @click="clearIncompleteDrafts" :disabled="incompleteDraftArray.length===0">🧹 清除未完成草稿</button>
+                <button class="btn btn-danger" @click="clearResponses" :disabled="responseArray.length===0 && incompleteDraftArray.length===0">🗑️ 清空全部資料</button>
                 <button class="btn btn-primary gear-btn" @click="openSettingsModal" title="自評內容與結果設定">⚙️</button>
             </div>
         </div>
@@ -469,6 +479,10 @@
             <div class="card summary-card green">
                 <div class="summary-label">完成自評人數</div>
                 <div class="summary-value">{{ responseArray.length }}</div>
+            </div>
+            <div class="card summary-card amber">
+                <div class="summary-label">未完成草稿</div>
+                <div class="summary-value">{{ incompleteDraftArray.length }}</div>
             </div>
             <div class="card summary-card" v-for="comp in competencies" :key="'sum_'+comp.id">
                 <div class="summary-label">{{ comp.name }}平均</div>
@@ -493,6 +507,7 @@
             <button class="tab-btn" :class="{active:teacherTab==='overview'}" @click="teacherTab='overview'">整體摘要</button>
             <button class="tab-btn" :class="{active:teacherTab==='items'}" @click="teacherTab='items'">逐題結果</button>
             <button class="tab-btn" :class="{active:teacherTab==='individual'}" @click="teacherTab='individual'">個人填答</button>
+            <button class="tab-btn" :class="{active:teacherTab==='drafts'}" @click="teacherTab='drafts'">未完成草稿（{{ incompleteDraftArray.length }}）</button>
         </div>
 
         <div v-if="teacherTab==='overview'" class="card">
@@ -527,7 +542,7 @@
             <div v-else class="teacher-empty">尚無學員完成自評。</div>
         </div>
 
-        <div v-else class="card">
+        <div v-else-if="teacherTab==='individual'" class="card">
             <h2 class="section-title">個人填答清單</h2>
             <div v-if="responseArray.length" class="table-wrap">
                 <table>
@@ -551,6 +566,34 @@
                 </table>
             </div>
             <div v-else class="teacher-empty">尚無學員完成自評。</div>
+        </div>
+
+        <div v-else class="card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:250px;">
+                    <h2 class="section-title" style="margin-bottom:7px;">未完成自動儲存草稿</h2>
+                    <p class="draft-note">這裡只顯示尚未按下「觀看自評結果」的草稿，不會列入正式統計。可逐筆刪除，或使用「全部清除」一次清除。</p>
+                </div>
+                <button class="btn btn-warning" @click="clearIncompleteDrafts" :disabled="incompleteDraftArray.length===0">🧹 全部清除</button>
+            </div>
+            <div v-if="incompleteDraftArray.length" class="table-wrap">
+                <table>
+                    <thead>
+                    <tr><th>姓名</th><th>填答進度</th><th>首次建立</th><th>最後更新</th><th>狀態</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                    <tr v-for="draft in incompleteDraftArray" :key="draft.id">
+                        <td><strong v-if="draft.name">{{ draft.name }}</strong><span v-else class="draft-name-empty">尚未填姓名</span></td>
+                        <td>{{ draftAnsweredCount(draft) }} / {{ totalItems }} 題</td>
+                        <td>{{ formatDate(draft.createdAt) }}</td>
+                        <td>{{ formatDate(draft.updatedAt) }}</td>
+                        <td><span class="draft-status-badge">未完成</span></td>
+                        <td><div class="draft-actions"><button class="btn btn-danger" style="padding:7px 11px;" @click="deleteIncompleteDraft(draft)">刪除草稿</button></div></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div v-else class="teacher-empty">目前沒有未完成草稿。</div>
         </div>
 
         <!-- 設定彈窗 -->
@@ -825,7 +868,8 @@
                 <div class="identity-grid">
                     <div>
                         <label>姓名 <span class="required">＊</span></label>
-                        <input class="field" v-model.trim="studentForm.name" placeholder="請輸入姓名">
+                        <input id="student-name-field" class="field" :class="{'missing-field':validationAttempted && !studentForm.name.trim()}" v-model.trim="studentForm.name" placeholder="請輸入姓名">
+                        <div v-if="validationAttempted && !studentForm.name.trim()" class="missing-field-note">⚠️ 請填寫姓名</div>
                     </div>
                 </div>
             </div>
@@ -858,7 +902,8 @@
                         </div>
                         <span class="competency-count">{{ answeredInCompetency(comp) }} / {{ comp.items.length }}</span>
                     </div>
-                    <div v-for="(item,index) in comp.items" :key="item.id" class="question-card">
+                    <div v-for="(item,index) in comp.items" :key="item.id" class="question-card" :id="'question-'+item.id" :class="{'missing-answer':validationAttempted && !isValidScore(studentForm.answers[item.id])}">
+                        <div v-if="validationAttempted && !isValidScore(studentForm.answers[item.id])" class="missing-answer-label">⚠️ 此題尚未作答</div>
                         <div class="question-text">{{ questionNumber(cIndex,index) }}. {{ item.text }}</div>
                         <div class="rating-row" :style="{gridTemplateColumns:'repeat('+scales.length+',1fr)'}">
                             <button v-for="scale in scales" :key="scale.value" type="button" class="rating-btn"
@@ -871,7 +916,8 @@
             </template>
 
             <section v-else class="competency-section continuous-question-list">
-                <div v-for="(entry,index) in studentQuestionEntries" :key="entry.item.id" class="question-card">
+                <div v-for="(entry,index) in studentQuestionEntries" :key="entry.item.id" class="question-card" :id="'question-'+entry.item.id" :class="{'missing-answer':validationAttempted && !isValidScore(studentForm.answers[entry.item.id])}">
+                    <div v-if="validationAttempted && !isValidScore(studentForm.answers[entry.item.id])" class="missing-answer-label">⚠️ 此題尚未作答</div>
                     <div class="question-text">{{ index+1 }}. {{ entry.item.text }}</div>
                     <div class="rating-row" :style="{gridTemplateColumns:'repeat('+scales.length+',1fr)'}">
                         <button v-for="scale in scales" :key="scale.value" type="button" class="rating-btn"
@@ -888,8 +934,8 @@
                         <div>已完成 {{ answeredCount }} / {{ totalItems }} 題</div>
                         <div class="autosave-status" :class="draftSaveState">{{ draftSaveLabel }}</div>
                     </div>
-                    <button class="btn btn-success" style="min-width:160px;" @click="submitResponse" :disabled="isSubmitting || !canViewResult">
-                        {{ isSubmitting ? '整理結果中...' : (canViewResult ? '觀看自評結果' : (studentForm.name.trim() ? '完成全部題目後觀看' : '請先填寫姓名')) }}
+                    <button class="btn btn-success" style="min-width:160px;" @click="submitResponse" :disabled="isSubmitting">
+                        {{ isSubmitting ? '整理結果中...' : '觀看自評結果' }}
                     </button>
                 </div>
             </div>
@@ -1174,6 +1220,7 @@ createApp({
             newAssessmentName: '',
             assessmentSettings: normalizeSettings({}),
             responses: {},
+            drafts: {},
             teacherTab: 'overview',
             selectedResponse: null,
             toastMsg: '',
@@ -1197,6 +1244,7 @@ createApp({
             studentDraftReady: false,
             studentInitialScrollDone: false,
             studentQuestionOrder: [],
+            validationAttempted: false,
             isExportingPng: false
         };
     },
@@ -1240,6 +1288,11 @@ createApp({
         responseArray() {
             return Object.keys(this.responses || {}).map(id => ({ id, ...this.responses[id] }))
                 .sort((a,b) => (b.submittedAt || 0) - (a.submittedAt || 0));
+        },
+        incompleteDraftArray() {
+            return Object.keys(this.drafts || {}).map(id => ({ id, ...this.drafts[id] }))
+                .filter(draft => draft.status !== 'submitted' && draft.locked !== true)
+                .sort((a,b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
         },
         groupCompetencyRanking() {
             return this.competencies.map((comp,index) => ({
@@ -1424,6 +1477,9 @@ createApp({
             if (this.currentView === 'teacher') {
                 db.ref(`selfAssessments/${this.assessmentId}/responses`).on('value', snap => {
                     this.responses = snap.val() || {};
+                });
+                db.ref(`selfAssessments/${this.assessmentId}/drafts`).on('value', snap => {
+                    this.drafts = snap.val() || {};
                 });
             }
         },
@@ -1886,11 +1942,32 @@ createApp({
                 .then(() => this.showMessage(state ? '✅ 已開放學員填答' : '⏸️ 已關閉學員填答'))
                 .catch(err => this.showMessage('❌ 更新失敗：' + err.message));
         },
+        draftAnsweredCount(draft) {
+            return this.allItems.filter(item => this.isValidScore(draft?.answers?.[item.id])).length;
+        },
+        deleteIncompleteDraft(draft) {
+            const label = draft?.name ? `「${draft.name}」` : '這筆未填姓名的';
+            this.askConfirm(`確定刪除${label}未完成草稿？刪除後，該學員若仍停留在填答頁並繼續操作，系統可能會重新建立草稿。`, () => {
+                db.ref(`selfAssessments/${this.assessmentId}/drafts/${draft.id}`).remove()
+                    .then(() => this.showMessage('🗑️ 未完成草稿已刪除'))
+                    .catch(err => this.showMessage('❌ 刪除草稿失敗：' + err.message));
+            });
+        },
+        clearIncompleteDrafts() {
+            if (!this.incompleteDraftArray.length) { this.showMessage('目前沒有未完成草稿'); return; }
+            this.askConfirm(`確定清除目前 ${this.incompleteDraftArray.length} 筆未完成草稿？正式結果與已完成鎖定資料不會受到影響。`, () => {
+                const updates = {};
+                this.incompleteDraftArray.forEach(draft => { updates[draft.id] = null; });
+                db.ref(`selfAssessments/${this.assessmentId}/drafts`).update(updates)
+                    .then(() => this.showMessage('🧹 未完成草稿已全部清除'))
+                    .catch(err => this.showMessage('❌ 清除草稿失敗：' + err.message));
+            });
+        },
         clearResponses() {
-            this.askConfirm('確定要清空本活動的所有正式結果與尚未完成的自動儲存草稿？此動作無法復原。', () => {
+            this.askConfirm('確定要清空本活動的所有正式結果、完成鎖定資料與未完成草稿？此動作無法復原。', () => {
                 const updates = { responses:null, drafts:null };
                 db.ref(`selfAssessments/${this.assessmentId}`).update(updates)
-                    .then(() => this.showMessage('🗑️ 正式結果與自動儲存草稿已清空'))
+                    .then(() => this.showMessage('🗑️ 本活動的正式結果與草稿資料已全部清空'))
                     .catch(err => this.showMessage('❌ 清空失敗：' + err.message));
             });
         },
@@ -1937,6 +2014,22 @@ createApp({
             });
             setTimeout(reset, 80);
             setTimeout(reset, 250);
+        },
+        scrollToFirstMissing() {
+            this.$nextTick(() => {
+                let target = null;
+                if (!this.studentForm.name.trim()) {
+                    target = document.getElementById('student-name-field');
+                } else {
+                    target = document.querySelector('.question-card.missing-answer');
+                }
+                if (!target) return;
+                try { target.scrollIntoView({ behavior:'smooth', block:'center' }); }
+                catch (_) { window.scrollTo(0, Math.max(0, target.getBoundingClientRect().top + window.scrollY - 90)); }
+                if (typeof target.focus === 'function' && target.id === 'student-name-field') {
+                    setTimeout(() => target.focus({ preventScroll:true }), 350);
+                }
+            });
         },
         ensureDraftId() {
             if (this.draftId) return this.draftId;
@@ -2138,13 +2231,15 @@ createApp({
         async submitResponse() {
             if (this.isSubmitting || this.isFinalized || this.studentStage === 'submitted') return;
             if (!this.assessmentSettings.isActive) { this.showMessage('⚠️ 本活動目前已關閉填答'); return; }
-            if (!this.studentForm.name.trim()) {
-                this.showMessage('⚠️ 請先填寫姓名');
-                this.forceScrollTop();
-                return;
-            }
-            if (this.answeredCount !== this.totalItems) {
-                this.showMessage(`⚠️ 還有 ${this.totalItems - this.answeredCount} 題尚未作答`);
+            this.validationAttempted = true;
+            const missingName = !this.studentForm.name.trim();
+            const missingCount = this.totalItems - this.answeredCount;
+            if (missingName || missingCount > 0) {
+                const parts = [];
+                if (missingName) parts.push('姓名');
+                if (missingCount > 0) parts.push(`${missingCount} 題`);
+                this.showMessage(`⚠️ 尚未完成：${parts.join('、')}，已為您標示漏填位置`);
+                this.scrollToFirstMissing();
                 return;
             }
             this.isSubmitting = true;
@@ -2213,6 +2308,7 @@ createApp({
                 this.isFinalized = false;
                 this.studentDraftReady = true;
                 this.draftSaveState = 'idle';
+                this.validationAttempted = false;
                 this.studentForm = { name:'', answers:{} };
                 this.studentStage = 'form';
                 this.refreshStudentQuestionOrder();
