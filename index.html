@@ -172,6 +172,11 @@
         .bottom-action { position: fixed; left: 0; right: 0; bottom: 0; z-index: 100; background: rgba(255,255,255,.96); backdrop-filter: blur(8px); border-top: 1px solid var(--slate-200); padding: 12px 18px; box-shadow: 0 -5px 18px rgba(15,23,42,.08); }
         .bottom-inner { max-width: 860px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 14px; }
         .bottom-progress { font-weight: 900; color: var(--slate-700); }
+        .autosave-status { margin-top: 3px; font-size: .78rem; font-weight: 700; color: var(--slate-500); }
+        .autosave-status.saving { color: #0369a1; }
+        .autosave-status.saved { color: #047857; }
+        .autosave-status.error { color: #b91c1c; }
+        .locked-note { max-width: 620px; margin: 18px auto 0; padding: 12px 14px; border-radius: 10px; background: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; font-weight: 700; line-height: 1.6; }
         .submitted-box { text-align: center; padding: 42px 24px; }
         .submitted-icon { font-size: 3.8rem; }
         .submitted-box h2 { color: var(--slate-900); font-size: 1.7rem; margin: 10px 0; }
@@ -804,11 +809,10 @@
                         <div v-else class="relative-empty">您目前各題的自評分數相同，因此暫時沒有明顯的相對高低差異。</div>
                     </div>
 
-                    <div v-if="answeredCount!==totalItems" style="margin:18px auto 0;max-width:620px;padding:12px 14px;border-radius:10px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-weight:700;line-height:1.6;">講師已更新題目，請點選「重新檢視自評」完成新增或調整後的題目。</div>
+                    <div class="locked-note">🔒 此份自評已完成並鎖定。為維持結果的一致性，完成後無法返回修改答案。</div>
                 </div>
                 <div class="submitted-actions">
                     <button class="btn btn-outline-blue" @click="exportStudentResultPng" :disabled="isExportingPng">{{ isExportingPng ? '匯出中...' : '🖼️ 匯出結果 PNG' }}</button>
-                    <button v-if="assessmentSettings.isActive" class="btn btn-primary" @click="studentStage='form'">✏️ 重新檢視自評</button>
                     <button class="btn btn-outline" @click="startAnotherResponse">👥 此裝置換另一人填寫</button>
                 </div>
             </div>
@@ -880,9 +884,12 @@
 
             <div class="bottom-action">
                 <div class="bottom-inner">
-                    <div class="bottom-progress">已完成 {{ answeredCount }} / {{ totalItems }} 題</div>
-                    <button class="btn btn-success" style="min-width:160px;" @click="submitResponse" :disabled="isSubmitting">
-                        {{ isSubmitting ? '整理結果中...' : '觀看自評結果' }}
+                    <div class="bottom-progress">
+                        <div>已完成 {{ answeredCount }} / {{ totalItems }} 題</div>
+                        <div class="autosave-status" :class="draftSaveState">{{ draftSaveLabel }}</div>
+                    </div>
+                    <button class="btn btn-success" style="min-width:160px;" @click="submitResponse" :disabled="isSubmitting || !canViewResult">
+                        {{ isSubmitting ? '整理結果中...' : (canViewResult ? '觀看自評結果' : (studentForm.name.trim() ? '完成全部題目後觀看' : '請先填寫姓名')) }}
                     </button>
                 </div>
             </div>
@@ -1180,9 +1187,15 @@ createApp({
             studentForm: { name: '', answers: {} },
             studentStage: 'form',
             submissionId: '',
+            draftId: '',
+            draftCreatedAt: 0,
+            isFinalized: false,
             isSubmitting: false,
             draftSaveTimer: null,
+            draftSaveState: 'idle',
             studentStateRestored: false,
+            studentDraftReady: false,
+            studentInitialScrollDone: false,
             studentQuestionOrder: [],
             isExportingPng: false
         };
@@ -1214,6 +1227,16 @@ createApp({
         totalItems() { return this.allItems.length; },
         answeredCount() { return this.allItems.filter(item => this.isValidScore(this.studentForm.answers[item.id])).length; },
         progressPercent() { return this.totalItems ? Math.round(this.answeredCount / this.totalItems * 100) : 0; },
+        canViewResult() {
+            return !this.isFinalized && Boolean(this.studentForm.name.trim()) && this.totalItems > 0 && this.answeredCount === this.totalItems;
+        },
+        draftSaveLabel() {
+            if (this.isFinalized || this.studentStage === 'submitted') return '已完成並鎖定';
+            if (this.draftSaveState === 'saving') return '正在自動儲存…';
+            if (this.draftSaveState === 'saved') return '已自動儲存';
+            if (this.draftSaveState === 'error') return '自動儲存暫時失敗，系統會再次嘗試';
+            return '填答內容會自動儲存';
+        },
         responseArray() {
             return Object.keys(this.responses || {}).map(id => ({ id, ...this.responses[id] }))
                 .sort((a,b) => (b.submittedAt || 0) - (a.submittedAt || 0));
@@ -1246,15 +1269,20 @@ createApp({
         studentForm: {
             deep: true,
             handler() {
-                if (this.currentView !== 'student' || !this.assessmentId || this.studentStage === 'submitted') return;
+                if (this.currentView !== 'student' || !this.assessmentId || !this.studentDraftReady || this.studentStage === 'submitted' || this.isFinalized) return;
+                try { localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm)); } catch (_) {}
                 clearTimeout(this.draftSaveTimer);
-                this.draftSaveTimer = setTimeout(() => {
-                    localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm));
-                }, 250);
+                this.draftSaveState = 'saving';
+                this.draftSaveTimer = setTimeout(() => this.saveStudentDraft(), 350);
             }
         }
     },
     mounted() {
+        if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+        this.forceScrollTop();
+        window.addEventListener('pageshow', () => {
+            if (this.currentView === 'student') this.forceScrollTop();
+        }, { once:true });
         const params = new URLSearchParams(window.location.search);
         const id = params.get('assessment');
         const role = params.get('role');
@@ -1385,6 +1413,10 @@ createApp({
                     if (!this.studentStateRestored) this.restoreStudentState();
                 }
                 this.isLoading = false;
+                if (this.currentView === 'student' && !this.studentInitialScrollDone) {
+                    this.studentInitialScrollDone = true;
+                    this.$nextTick(() => this.forceScrollTop());
+                }
             }, err => {
                 this.isLoading = false;
                 this.showMessage('❌ 讀取活動失敗：' + err.message);
@@ -1855,9 +1887,10 @@ createApp({
                 .catch(err => this.showMessage('❌ 更新失敗：' + err.message));
         },
         clearResponses() {
-            this.askConfirm('確定要清空本活動的所有學員填答？此動作無法復原。', () => {
-                db.ref(`selfAssessments/${this.assessmentId}/responses`).remove()
-                    .then(() => this.showMessage('🗑️ 填答結果已清空'))
+            this.askConfirm('確定要清空本活動的所有正式結果與尚未完成的自動儲存草稿？此動作無法復原。', () => {
+                const updates = { responses:null, drafts:null };
+                db.ref(`selfAssessments/${this.assessmentId}`).update(updates)
+                    .then(() => this.showMessage('🗑️ 正式結果與自動儲存草稿已清空'))
                     .catch(err => this.showMessage('❌ 清空失敗：' + err.message));
             });
         },
@@ -1889,37 +1922,154 @@ createApp({
             try { sessionStorage.setItem(this.questionOrderKey(), JSON.stringify(shuffled)); } catch (_) {}
         },
         draftKey() { return `self_assessment_draft_${this.assessmentId}`; },
+        draftIdKey() { return `self_assessment_draft_id_${this.assessmentId}`; },
         submissionKey() { return `self_assessment_submission_${this.assessmentId}`; },
-        restoreStudentState() {
+        forceScrollTop() {
+            const reset = () => {
+                window.scrollTo(0, 0);
+                document.documentElement.scrollTop = 0;
+                document.body.scrollTop = 0;
+            };
+            reset();
+            requestAnimationFrame(() => {
+                reset();
+                requestAnimationFrame(reset);
+            });
+            setTimeout(reset, 80);
+            setTimeout(reset, 250);
+        },
+        ensureDraftId() {
+            if (this.draftId) return this.draftId;
+            let saved = '';
+            try { saved = localStorage.getItem(this.draftIdKey()) || ''; } catch (_) {}
+            this.draftId = saved || db.ref(`selfAssessments/${this.assessmentId}/drafts`).push().key;
+            if (!this.draftCreatedAt) this.draftCreatedAt = Date.now();
+            try { localStorage.setItem(this.draftIdKey(), this.draftId); } catch (_) {}
+            return this.draftId;
+        },
+        saveStudentDraft() {
+            if (this.currentView !== 'student' || !this.assessmentId || !this.studentDraftReady || this.studentStage === 'submitted' || this.isFinalized) return Promise.resolve();
+            const hasAnyAnswer = Object.values(this.studentForm.answers || {}).some(value => this.isValidScore(value));
+            const hasContent = Boolean(this.studentForm.name.trim()) || hasAnyAnswer;
+            if (!hasContent) {
+                this.draftSaveState = 'idle';
+                return Promise.resolve();
+            }
+            const draftId = this.ensureDraftId();
+            const now = Date.now();
+            if (!this.draftCreatedAt) this.draftCreatedAt = now;
+            const payload = {
+                name:this.studentForm.name.trim(),
+                answers:{ ...this.studentForm.answers },
+                status:'draft',
+                locked:false,
+                createdAt:this.draftCreatedAt,
+                updatedAt:now
+            };
+            this.draftSaveState = 'saving';
+            return db.ref(`selfAssessments/${this.assessmentId}/drafts/${draftId}`).update(payload)
+                .then(() => {
+                    if (!this.isFinalized && this.studentStage !== 'submitted') this.draftSaveState = 'saved';
+                })
+                .catch(err => {
+                    this.draftSaveState = 'error';
+                    console.error('自動儲存草稿失敗：', err);
+                });
+        },
+        async restoreStudentState() {
             if (this.studentStateRestored || this.submissionId || this.studentStage === 'submitted') return;
             this.studentStateRestored = true;
-            const savedSubmission = localStorage.getItem(this.submissionKey());
-            const draft = localStorage.getItem(this.draftKey());
-            if (draft) {
+            let savedSubmission = '';
+            let savedDraftId = '';
+            let localDraft = '';
+            try {
+                savedSubmission = localStorage.getItem(this.submissionKey()) || '';
+                savedDraftId = localStorage.getItem(this.draftIdKey()) || '';
+                localDraft = localStorage.getItem(this.draftKey()) || '';
+            } catch (_) {}
+
+            if (localDraft) {
                 try {
-                    const parsed = JSON.parse(draft);
+                    const parsed = JSON.parse(localDraft);
                     this.studentForm = { name:parsed.name || '', answers:parsed.answers || {} };
                 } catch (_) {}
             }
+
             if (savedSubmission) {
                 this.submissionId = savedSubmission;
-                db.ref(`selfAssessments/${this.assessmentId}/responses/${savedSubmission}`).once('value').then(snap => {
+                try {
+                    const snap = await db.ref(`selfAssessments/${this.assessmentId}/responses/${savedSubmission}`).once('value');
                     const val = snap.val();
                     if (val) {
                         this.studentForm = { name:val.name || '', answers:val.answers || {} };
+                        this.isFinalized = true;
                         this.studentStage = 'submitted';
-                    } else {
-                        localStorage.removeItem(this.submissionKey());
-                        this.submissionId = '';
+                        this.draftSaveState = 'saved';
+                        this.$nextTick(() => this.forceScrollTop());
+                        return;
                     }
-                });
+                } catch (err) {
+                    console.error('讀取已完成自評失敗：', err);
+                    this.isFinalized = true;
+                    this.studentStage = 'submitted';
+                    this.draftSaveState = 'error';
+                    this.$nextTick(() => this.forceScrollTop());
+                    return;
+                }
+                try { localStorage.removeItem(this.submissionKey()); } catch (_) {}
+                this.submissionId = '';
             }
+
+            if (savedDraftId) {
+                this.draftId = savedDraftId;
+                try {
+                    const snap = await db.ref(`selfAssessments/${this.assessmentId}/drafts/${savedDraftId}`).once('value');
+                    const val = snap.val();
+                    if (val) {
+                        this.draftCreatedAt = val.createdAt || Date.now();
+                        if (val.status === 'submitted' && val.locked) {
+                            let response = null;
+                            if (val.responseId) {
+                                try {
+                                    const responseSnap = await db.ref(`selfAssessments/${this.assessmentId}/responses/${val.responseId}`).once('value');
+                                    response = responseSnap.val();
+                                } catch (err) {
+                                    console.error('讀取鎖定結果失敗，改由完成草稿還原：', err);
+                                }
+                            }
+                            const lockedData = response || val;
+                            this.submissionId = val.responseId || '';
+                            this.studentForm = { name:lockedData.name || '', answers:lockedData.answers || {} };
+                            this.isFinalized = true;
+                            this.studentStage = 'submitted';
+                            this.draftSaveState = 'saved';
+                            if (val.responseId) {
+                                try { localStorage.setItem(this.submissionKey(), val.responseId); } catch (_) {}
+                            }
+                            this.$nextTick(() => this.forceScrollTop());
+                            return;
+                        } else if (!val.locked) {
+                            this.studentForm = { name:val.name || this.studentForm.name || '', answers:val.answers || this.studentForm.answers || {} };
+                            try { localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm)); } catch (_) {}
+                            this.draftSaveState = 'saved';
+                        }
+                    }
+                } catch (err) {
+                    console.error('讀取自動儲存草稿失敗：', err);
+                    this.draftSaveState = 'error';
+                }
+            }
+            this.studentDraftReady = true;
+            this.$nextTick(() => this.forceScrollTop());
         },
         isValidScore(value) {
             const score = Number(value);
             return score >= 1 && score <= this.maxScale;
         },
-        setAnswer(itemId, score) { this.studentForm.answers[itemId] = score; },
+        setAnswer(itemId, score) {
+            if (this.studentStage === 'submitted' || this.isFinalized) return;
+            this.studentForm.answers[itemId] = score;
+        },
         questionNumber(compIndex, itemIndex) {
             let total = itemIndex + 1;
             for (let i = 0; i < compIndex; i++) total += (this.competencies[i].items || []).length;
@@ -1985,43 +2135,88 @@ createApp({
             return ranking.length > 0 && ranking[0].score !== ranking[ranking.length - 1].score;
         },
         responsePrimaryExplanations(response) { return this.buildPrimaryExplanations(this.responseHighestCompetencies(response)); },
-        submitResponse() {
+        async submitResponse() {
+            if (this.isSubmitting || this.isFinalized || this.studentStage === 'submitted') return;
             if (!this.assessmentSettings.isActive) { this.showMessage('⚠️ 本活動目前已關閉填答'); return; }
-            if (!this.studentForm.name.trim()) { this.showMessage('⚠️ 請先填寫姓名'); window.scrollTo({top:0,behavior:'smooth'}); return; }
+            if (!this.studentForm.name.trim()) {
+                this.showMessage('⚠️ 請先填寫姓名');
+                this.forceScrollTop();
+                return;
+            }
             if (this.answeredCount !== this.totalItems) {
                 this.showMessage(`⚠️ 還有 ${this.totalItems - this.answeredCount} 題尚未作答`);
                 return;
             }
             this.isSubmitting = true;
-            if (!this.submissionId) this.submissionId = db.ref(`selfAssessments/${this.assessmentId}/responses`).push().key;
-            const dimensionAverages = {};
-            this.competencies.forEach(c => dimensionAverages[c.id] = Number(this.calculateCompetency(this.studentForm.answers, c.id).toFixed(2)));
-            db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}/submittedAt`).once('value').then(snap => {
-                const payload = {
+            clearTimeout(this.draftSaveTimer);
+            try {
+                const draftId = this.ensureDraftId();
+                if (!this.submissionId) this.submissionId = db.ref(`selfAssessments/${this.assessmentId}/responses`).push().key;
+                const now = Date.now();
+                const dimensionAverages = {};
+                this.competencies.forEach(c => dimensionAverages[c.id] = Number(this.calculateCompetency(this.studentForm.answers, c.id).toFixed(2)));
+                const responsePayload = {
                     name:this.studentForm.name.trim(),
                     answers:{ ...this.studentForm.answers },
                     dimensionAverages,
                     competencyAverages:dimensionAverages,
-                    submittedAt:snap.val() || Date.now(),
-                    updatedAt:Date.now()
+                    status:'submitted',
+                    locked:true,
+                    draftId,
+                    submittedAt:now,
+                    updatedAt:now
                 };
-                return db.ref(`selfAssessments/${this.assessmentId}/responses/${this.submissionId}`).set(payload);
-            }).then(() => {
-                localStorage.setItem(this.submissionKey(), this.submissionId);
-                localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm));
+                const finalizedDraft = {
+                    name:this.studentForm.name.trim(),
+                    answers:{ ...this.studentForm.answers },
+                    status:'submitted',
+                    locked:true,
+                    responseId:this.submissionId,
+                    createdAt:this.draftCreatedAt || now,
+                    submittedAt:now,
+                    updatedAt:now
+                };
+                const updates = {};
+                updates[`responses/${this.submissionId}`] = responsePayload;
+                updates[`drafts/${draftId}`] = finalizedDraft;
+                await db.ref(`selfAssessments/${this.assessmentId}`).update(updates);
+
+                this.isFinalized = true;
+                this.draftSaveState = 'saved';
+                try {
+                    localStorage.setItem(this.submissionKey(), this.submissionId);
+                    localStorage.setItem(this.draftIdKey(), draftId);
+                    localStorage.setItem(this.draftKey(), JSON.stringify(this.studentForm));
+                } catch (_) {}
                 this.studentStage = 'submitted';
-                window.scrollTo({top:0,behavior:'smooth'});
-            }).catch(err => this.showMessage('❌ 暫時無法開啟結果：' + err.message))
-              .finally(() => this.isSubmitting = false);
+                await this.$nextTick();
+                this.forceScrollTop();
+            } catch (err) {
+                this.showMessage('❌ 暫時無法開啟結果：' + err.message);
+                this.draftSaveState = 'error';
+            } finally {
+                this.isSubmitting = false;
+            }
         },
         startAnotherResponse() {
-            this.askConfirm('確定要在這個裝置換另一人填寫嗎？目前這一份自評資料仍會保留。', () => {
-                localStorage.removeItem(this.submissionKey());
-                localStorage.removeItem(this.draftKey());
+            this.askConfirm('確定要在這個裝置換另一人填寫嗎？目前這一份已完成的自評資料仍會保留。', () => {
+                clearTimeout(this.draftSaveTimer);
+                try {
+                    localStorage.removeItem(this.submissionKey());
+                    localStorage.removeItem(this.draftKey());
+                    localStorage.removeItem(this.draftIdKey());
+                    sessionStorage.removeItem(this.questionOrderKey());
+                } catch (_) {}
                 this.submissionId = '';
+                this.draftId = '';
+                this.draftCreatedAt = 0;
+                this.isFinalized = false;
+                this.studentDraftReady = true;
+                this.draftSaveState = 'idle';
                 this.studentForm = { name:'', answers:{} };
                 this.studentStage = 'form';
-                window.scrollTo({top:0,behavior:'smooth'});
+                this.refreshStudentQuestionOrder();
+                this.$nextTick(() => this.forceScrollTop());
             });
         },
         async exportStudentResultPng() {
